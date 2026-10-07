@@ -1,0 +1,12 @@
+{
+  "version": "2026-10-07-snapshot-3581",
+  "source": "plainkorean.kr 공개 API를 통해 사전에 조회해 둔 응답 스냅샷",
+  "record_count": 3581,
+  "fields": [
+    "keyword",
+    "alt"
+  ],
+  "examples_in_source_snapshot": true,
+  "examples_storage": "앱 내 자동 검출에는 keyword/alt만 탑재하고 상세 예문은 공식 API 낱말 조회에서 확인",
+  "disclaimer": "이 스냅샷은 사용자가 이전 작업에서 수집한 데이터이며 앱에서는 공식 사전 스냅샷으로 구분해 표시한다."
+}
