@@ -24,3 +24,19 @@ class AnalysisResult:
     scores: Dict[str, int]
     issues: List[Issue] = field(default_factory=list)
     stats: Dict[str, int] = field(default_factory=dict)
+
+
+@dataclass
+class BatchDocumentResult:
+    path: str
+    name: str
+    size_bytes: int
+    text_chars: int
+    elapsed_seconds: float
+    text: str = ""
+    result: AnalysisResult | None = None
+    error: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.result is not None and not self.error
