@@ -15,4 +15,5 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
       - run: pip install pytest requests python-docx pypdf
+      - run: python -m compileall -q app tests run.py
       - run: python -m pytest -q
