@@ -1,0 +1,65 @@
+[
+  {
+    "term": "피드백",
+    "alternatives": ["의견", "반응", "평가 의견"],
+    "severity": "review",
+    "source": "초기 예시 데이터 - 공식 API 확인 권장",
+    "note": "문맥에 따라 대체어를 선택합니다."
+  },
+  {
+    "term": "모니터링",
+    "alternatives": ["점검", "관찰", "확인"],
+    "severity": "review",
+    "source": "초기 예시 데이터 - 공식 API 확인 권장"
+  },
+  {
+    "term": "인프라",
+    "alternatives": ["기반 시설", "기반"],
+    "severity": "review",
+    "source": "초기 예시 데이터 - 공식 API 확인 권장"
+  },
+  {
+    "term": "니즈",
+    "alternatives": ["요구", "수요", "필요"],
+    "severity": "change",
+    "source": "초기 예시 데이터 - 공식 API 확인 권장"
+  },
+  {
+    "term": "컨설팅",
+    "alternatives": ["상담", "자문"],
+    "severity": "review",
+    "source": "초기 예시 데이터 - 공식 API 확인 권장"
+  },
+  {
+    "term": "가이드라인",
+    "alternatives": ["지침", "기준"],
+    "severity": "review",
+    "source": "초기 예시 데이터 - 공식 API 확인 권장"
+  },
+  {
+    "term": "로드맵",
+    "alternatives": ["단계별 계획", "추진 일정"],
+    "severity": "review",
+    "source": "초기 예시 데이터 - 공식 API 확인 권장"
+  },
+  {
+    "term": "매뉴얼",
+    "alternatives": ["안내서", "지침서"],
+    "severity": "review",
+    "source": "초기 예시 데이터 - 공식 API 확인 권장"
+  },
+  {
+    "term": "플랫폼",
+    "alternatives": ["기반", "기반 서비스", "체계"],
+    "severity": "reference",
+    "source": "초기 예시 데이터 - 공식 API 확인 권장",
+    "note": "전문적 의미가 달라질 수 있어 문맥 검토가 필요합니다."
+  },
+  {
+    "term": "프로그램",
+    "alternatives": ["과정", "활동", "계획"],
+    "severity": "reference",
+    "source": "초기 예시 데이터 - 공식 API 확인 권장",
+    "note": "기계적인 일괄 치환을 권장하지 않습니다."
+  }
+]

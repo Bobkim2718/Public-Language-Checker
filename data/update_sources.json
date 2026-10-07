@@ -1,0 +1,10 @@
+{
+  "official_keyword_api": "https://plainkorean.kr/api.jsp",
+  "official_principles": "https://www.plainkorean.kr/ko/dictionary/easy0.do",
+  "managed_update_manifest": "https://raw.githubusercontent.com/Bobkim2718/Public-Language-Checker/main/updates/manifest.json",
+  "notes": [
+    "공식 공개 API는 낱말 조회용으로 사용합니다.",
+    "전체 사전/규칙 업데이트는 관리형 업데이트 번들 또는 오프라인 JSON 파일로 분리합니다.",
+    "기관망에서 GitHub 접근이 제한되는 경우 업데이트 파일 가져오기 기능을 사용합니다."
+  ]
+}

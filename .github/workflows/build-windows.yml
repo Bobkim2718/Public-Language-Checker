@@ -1,0 +1,33 @@
+name: build-windows
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements.txt
+      - name: Build single EXE
+        shell: pwsh
+        run: >
+          pyinstaller
+          --noconfirm
+          --clean
+          --onefile
+          --windowed
+          --name PublicLanguageChecker
+          --add-data "data;data"
+          run.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PublicLanguageChecker-Windows
+          path: dist/PublicLanguageChecker.exe
