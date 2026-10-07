@@ -90,15 +90,29 @@ def _load_hwpx(path: Path) -> str:
 
         for name in names:
             root = ET.fromstring(archive.read(name))
-            current: list[str] = []
+            section_lines: list[str] = []
+
             for elem in root.iter():
-                local_name = elem.tag.rsplit("}", 1)[-1]
-                if local_name == "t" and elem.text:
-                    current.append(elem.text)
-                elif local_name in {"p", "tr"} and current:
-                    chunks.append("".join(current))
-                    current = []
-            if current:
-                chunks.append("".join(current))
+                if elem.tag.rsplit("}", 1)[-1] != "p":
+                    continue
+                texts = [
+                    child.text
+                    for child in elem.iter()
+                    if child.tag.rsplit("}", 1)[-1] == "t" and child.text
+                ]
+                line = "".join(texts).strip()
+                if line:
+                    section_lines.append(line)
+
+            if not section_lines:
+                fallback = [
+                    elem.text
+                    for elem in root.iter()
+                    if elem.tag.rsplit("}", 1)[-1] == "t" and elem.text
+                ]
+                if fallback:
+                    section_lines.append("".join(fallback).strip())
+
+            chunks.extend(section_lines)
 
     return "\n".join(line for line in chunks if line.strip())
