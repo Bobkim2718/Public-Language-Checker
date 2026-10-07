@@ -27,3 +27,18 @@ def test_ignores_nonexistent_and_unsupported_paths(tmp_path: Path):
     )
 
     assert result is None
+
+
+def test_supported_files_returns_multiple_up_to_limit(tmp_path: Path):
+    from app.drop_utils import supported_files
+
+    paths = []
+    for index in range(5):
+        path = tmp_path / f"{index}.txt"
+        path.write_text("x", encoding="utf-8")
+        paths.append(path)
+
+    result = supported_files(paths, {".txt"}, limit=3)
+
+    assert len(result) == 3
+    assert result[0].endswith("0.txt")
