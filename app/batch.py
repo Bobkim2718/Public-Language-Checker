@@ -5,8 +5,13 @@ from pathlib import Path
 from time import perf_counter
 
 from .analyzer import PublicLanguageAnalyzer
-from .document_loader import DocumentLoadError, SUPPORTED_EXTENSIONS, load_document
+from .document_loader import (
+    DocumentLoadError,
+    SUPPORTED_EXTENSIONS,
+    load_document_content,
+)
 from .models import BatchDocumentResult
+from .table_readability import TableReadabilityAnalyzer
 
 
 MAX_BATCH_FILES = 20
@@ -67,6 +72,7 @@ def validate_source_sizes(paths: list[Path]) -> None:
 def analyze_files(
     paths: list[Path],
     analyzer: PublicLanguageAnalyzer,
+    rules: dict | None = None,
     progress: Callable[[int, int, str], None] | None = None,
 ) -> list[BatchDocumentResult]:
     if len(paths) > MAX_BATCH_FILES:
@@ -74,6 +80,7 @@ def analyze_files(
 
     validate_source_sizes(paths)
 
+    table_analyzer = TableReadabilityAnalyzer(rules or {})
     results: list[BatchDocumentResult] = []
     total_chars = 0
     total = len(paths)
@@ -86,7 +93,8 @@ def analyze_files(
             progress(index - 1, total, path.name)
 
         try:
-            text = load_document(path)
+            content = load_document_content(path)
+            text = content.text
             text_chars = len(text)
 
             if text_chars > MAX_EXTRACTED_CHARS_PER_FILE:
@@ -103,6 +111,8 @@ def analyze_files(
 
             total_chars += text_chars
             analysis = analyzer.analyze(text)
+            table_result = table_analyzer.analyze(content)
+
             results.append(
                 BatchDocumentResult(
                     path=str(path),
@@ -112,6 +122,7 @@ def analyze_files(
                     elapsed_seconds=perf_counter() - started,
                     text=text,
                     result=analysis,
+                    table_result=table_result,
                 )
             )
         except (DocumentLoadError, BatchLimitError, OSError) as exc:
