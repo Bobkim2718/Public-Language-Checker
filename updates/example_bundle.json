@@ -1,0 +1,19 @@
+{
+  "version": "2026.10.07-example",
+  "released_at": "2026-10-07",
+  "source": "기관 관리자 예시",
+  "terms": [
+    {
+      "term": "샘플용어",
+      "alternatives": ["예시 표현"],
+      "severity": "review",
+      "source": "기관 사용자 사전"
+    }
+  ],
+  "rules": {
+    "sentence": {
+      "recommended_max_chars": 100,
+      "severe_max_chars": 150
+    }
+  }
+}
