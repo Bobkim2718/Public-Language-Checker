@@ -39,36 +39,60 @@ from .models import AnalysisResult, BatchDocumentResult, Issue
 
 
 class DocumentTextEdit(QTextEdit):
-    """파일 드롭은 경로 문자열 삽입 대신 실제 문서 열기로 전달한다."""
+    """파일 드롭/붙여넣기에서 경로 문자열 삽입을 완전히 차단한다."""
 
     filesDropped = Signal(object)
+    unsupportedFilesDropped = Signal(object)
+
+    def _local_paths(self, mime_data) -> list[str]:
+        if not mime_data.hasUrls():
+            return []
+        return [
+            url.toLocalFile()
+            for url in mime_data.urls()
+            if url.isLocalFile() and url.toLocalFile()
+        ]
+
+    def _handle_file_mime(self, mime_data) -> bool:
+        local_paths = self._local_paths(mime_data)
+        if not local_paths:
+            return False
+
+        files = supported_files(local_paths, SUPPORTED_EXTENSIONS)
+        unsupported = [
+            path for path in local_paths
+            if Path(path).suffix.lower() not in SUPPORTED_EXTENSIONS
+        ]
+
+        if files:
+            self.filesDropped.emit(files)
+        if unsupported:
+            self.unsupportedFilesDropped.emit(unsupported)
+
+        # 로컬 파일 URL이 하나라도 있으면 QTextEdit 기본 URL 삽입은 절대 실행하지 않는다.
+        return True
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
-        if event.mimeData().hasUrls():
-            local_paths = [
-                url.toLocalFile()
-                for url in event.mimeData().urls()
-                if url.isLocalFile()
-            ]
-            files = supported_files(local_paths, SUPPORTED_EXTENSIONS)
-            if files:
-                event.acceptProposedAction()
-                return
+        if self._local_paths(event.mimeData()):
+            event.acceptProposedAction()
+            return
         super().dragEnterEvent(event)
 
     def dropEvent(self, event: QDropEvent) -> None:
-        if event.mimeData().hasUrls():
-            local_paths = [
-                url.toLocalFile()
-                for url in event.mimeData().urls()
-                if url.isLocalFile()
-            ]
-            files = supported_files(local_paths, SUPPORTED_EXTENSIONS)
-            if files:
-                self.filesDropped.emit(files)
-                event.acceptProposedAction()
-                return
+        if self._handle_file_mime(event.mimeData()):
+            event.acceptProposedAction()
+            return
         super().dropEvent(event)
+
+    def canInsertFromMimeData(self, source) -> bool:
+        if self._local_paths(source):
+            return True
+        return super().canInsertFromMimeData(source)
+
+    def insertFromMimeData(self, source) -> None:
+        if self._handle_file_mime(source):
+            return
+        super().insertFromMimeData(source)
 
 
 class BatchWorker(QObject):
@@ -107,12 +131,12 @@ class MainWindow(QMainWindow):
         self.batch_worker: BatchWorker | None = None
         self.batch_progress: QProgressDialog | None = None
 
-        self.setWindowTitle("공공언어 검사기 v2.3")
+        self.setWindowTitle("공공언어 검사기 v2.4")
         self.resize(1460, 900)
         self.setAcceptDrops(True)
 
         self.editor = DocumentTextEdit()
-        self.editor.filesDropped.connect(self.handle_dropped_files)
+        self.editor.filesDropped.connect(self.handle_dropped_files)\n        self.editor.unsupportedFilesDropped.connect(self.handle_unsupported_files)
         self.editor.setPlaceholderText(
             "문서를 끌어 놓거나 [문서 열기]를 누르세요.\n"
             "2개 이상 파일을 한 번에 놓으면 파일 비교 분석을 시작합니다.\n"
@@ -256,7 +280,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.detail_page, "문서 상세")
         self.tabs.addTab(self.batch_page, "파일 비교")
 
-        title = QLabel("공공언어 검사기 v2.3")
+        title = QLabel("공공언어 검사기 v2.4")
         title_font = title.font()
         title_font.setPointSize(19)
         title_font.setBold(True)
@@ -294,7 +318,7 @@ class MainWindow(QMainWindow):
             self,
             "공공언어 검사 문서 열기",
             "",
-            "지원 문서 (*.hwpx *.docx *.pdf *.txt);;모든 파일 (*.*)",
+            "지원 문서 (*.hwp *.hwpx *.docx *.pdf *.txt);;모든 파일 (*.*)",
         )
         if path:
             self._load_path(Path(path))
@@ -304,10 +328,22 @@ class MainWindow(QMainWindow):
             self,
             f"비교할 문서 선택 - 최대 {MAX_BATCH_FILES}개",
             "",
-            "지원 문서 (*.hwpx *.docx *.pdf *.txt);;모든 파일 (*.*)",
+            "지원 문서 (*.hwp *.hwpx *.docx *.pdf *.txt);;모든 파일 (*.*)",
         )
         if paths:
             self.start_batch_analysis(paths)
+
+    @Slot(object)
+    def handle_unsupported_files(self, files: object) -> None:
+        names = [Path(str(x)).name for x in (files or [])]
+        if not names:
+            return
+        QMessageBox.warning(
+            self,
+            "지원하지 않는 파일",
+            "다음 파일은 지원 형식이 아니어서 경로 문자열로 삽입하지 않았습니다.\n\n"
+            + "\n".join(names[:10]),
+        )
 
     @Slot(object)
     def handle_dropped_files(self, files: object) -> None:
