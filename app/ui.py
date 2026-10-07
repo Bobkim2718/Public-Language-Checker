@@ -131,7 +131,7 @@ class MainWindow(QMainWindow):
         self.batch_worker: BatchWorker | None = None
         self.batch_progress: QProgressDialog | None = None
 
-        self.setWindowTitle("공공언어 검사기 v2.4.1")
+        self.setWindowTitle("공공언어 검사기 v2.5")
         self.resize(1460, 900)
         self.setAcceptDrops(True)
 
@@ -281,7 +281,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.detail_page, "문서 상세")
         self.tabs.addTab(self.batch_page, "파일 비교")
 
-        title = QLabel("공공언어 검사기 v2.4.1")
+        title = QLabel("공공언어 검사기 v2.5")
         title_font = title.font()
         title_font.setPointSize(19)
         title_font.setBold(True)
@@ -289,7 +289,7 @@ class MainWindow(QMainWindow):
 
         subtitle = QLabel(
             "‘쉬운 공문서 쓰기’ 작성 원칙과 쉬운 우리말 공식 사전 스냅샷을 바탕으로 "
-            "문서를 로컬에서 분석합니다. 최대 20개 문서의 결과를 한 화면에서 비교할 수 있습니다."
+            "HWP·HWPX·DOCX·PDF·TXT를 로컬에서 분석합니다. HWP 5.x는 한/글 설치 없이 직접 읽으며 최대 20개 문서를 비교할 수 있습니다."
         )
         subtitle.setWordWrap(True)
 

@@ -1,4 +1,4 @@
-# 공공언어 검사기 v2.4 (Public Language Checker)
+# 공공언어 검사기 v2.5 (Public Language Checker)
 
 공공기관 내부 문서를 Windows PC에서 **로컬 분석**하여 공공언어 적합도와 개선 후보를 제시하는 데스크톱 앱입니다.
 
@@ -64,6 +64,21 @@ data/official_terms/
 현재 CUSTOM 기본 사전에는 공식 스냅샷과 겹치지 않는 표현만 둡니다.
 
 
+
+
+## v2.5 HWP 직접 분석
+
+일반적인 **HWP 5.x 문서**는 더 이상 설치된 한/글 프로그램에 의존하지 않습니다.
+
+- HWP의 OLE Compound File 구조를 로컬에서 직접 읽음
+- FileHeader에서 압축·암호·배포용·DRM 속성 확인
+- `BodyText/Section*` 스트림을 섹션 순서대로 읽음
+- 압축 문서는 raw DEFLATE(zlib) 방식으로 해제
+- `HWPTAG_PARA_TEXT` 레코드에서 문단 텍스트 직접 추출
+- 표·그림 등 HWP 제어문자는 텍스트에서 제거하되, 표 셀 내부에 저장된 실제 문단 텍스트는 분석 대상으로 유지
+- 문서 원문은 외부 서버로 전송하지 않음
+
+직접 파싱이 불가능한 암호 문서, 일부 배포용/DRM 문서, HWP 5.x가 아닌 구형 문서는 설치된 한/글 Automation을 보조 경로로 시도합니다. 두 방식 모두 사용할 수 없으면 HWPX로 저장하도록 안내합니다.
 
 ## v2.4 HWP·표·드래그앤드롭 보완
 
