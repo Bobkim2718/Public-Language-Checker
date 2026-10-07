@@ -225,6 +225,7 @@ class PublicLanguageAnalyzer:
                 source_type=source_type,
                 severity=severity,
                 occurrence_count=count,
+                config=self.rules.get("repeat_scoring", {}),
             )
 
         return min(float(self.weights.get(CATEGORY_TERMS, 35)), penalty)
@@ -307,7 +308,11 @@ class PublicLanguageAnalyzer:
                     positions=positions,
                 )
             )
-            penalty += 1.0 + 0.15 * min(max(0, count - 1), 5)
+            repeat_config = self.rules.get("repeat_scoring", {})
+            norm_base = float(repeat_config.get("norm_base", 1.0))
+            norm_repeat = float(repeat_config.get("norm_repeat", 0.15))
+            repeat_cap = int(repeat_config.get("repeat_cap", 5))
+            penalty += norm_base + norm_repeat * min(max(0, count - 1), repeat_cap)
 
         latin_tokens = re.findall(r"\b[A-Za-z][A-Za-z0-9_-]{1,}\b", text)
         variants: dict[str, set[str]] = {}
@@ -401,7 +406,11 @@ class PublicLanguageAnalyzer:
                     positions=list(spans),
                 )
             )
-            penalty += 1.0 + 0.15 * min(max(0, count - 1), 5)
+            repeat_config = self.rules.get("repeat_scoring", {})
+            hangul_base = float(repeat_config.get("hangul_base", 1.0))
+            hangul_repeat = float(repeat_config.get("hangul_repeat", 0.15))
+            repeat_cap = int(repeat_config.get("repeat_cap", 5))
+            penalty += hangul_base + hangul_repeat * min(max(0, count - 1), repeat_cap)
 
         return min(float(self.weights.get(CATEGORY_HANGUL, 10)), penalty)
 
@@ -410,23 +419,29 @@ def _term_penalty(
     source_type: str,
     severity: str,
     occurrence_count: int,
+    config: dict,
 ) -> float:
     """동일 표현 반복은 완전 중복 감점하지 않고 완만하게만 가산한다."""
     count = max(1, occurrence_count)
-    repeat_count = min(max(0, count - 1), 5)
+    repeat_cap = int(config.get("repeat_cap", 5))
+    repeat_count = min(max(0, count - 1), repeat_cap)
 
     if source_type == "OFFICIAL":
-        base = 0.6
-        repeat_unit = 0.12
+        base = float(config.get("official_base", 0.6))
+        repeat_unit = float(config.get("official_repeat", 0.12))
         return base + repeat_unit * repeat_count
 
-    base_by_severity = {
-        "change": 1.5,
-        "review": 0.8,
-        "reference": 0.2,
-    }
-    base = base_by_severity.get(severity, 0.8)
-    return base + (base * 0.15 * repeat_count)
+    base_by_severity = config.get(
+        "custom_base",
+        {
+            "change": 1.5,
+            "review": 0.8,
+            "reference": 0.2,
+        },
+    )
+    base = float(base_by_severity.get(severity, 0.8))
+    repeat_ratio = float(config.get("custom_repeat_ratio", 0.15))
+    return base + (base * repeat_ratio * repeat_count)
 
 
 def _valid_ascii_boundary(text: str, term: str, start: int, end: int) -> bool:
