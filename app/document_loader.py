@@ -175,22 +175,23 @@ def _extract_hwpx_section(root: ET.Element) -> list[str]:
     for elem in root.iter():
         name = _local_name(elem.tag)
 
+        if name == "p":
+            # 표 셀 내부 문단은 바깥 표를 처리할 때 재귀적으로 읽는다.
+            if _has_ancestor_with_name(elem, "tbl", parent_map):
+                continue
+            text = _extract_paragraph_content(elem)
+            if text:
+                lines.append(text)
+            continue
+
         if name == "tbl":
-            # 중첩 표는 바깥 표 셀 처리 과정에서 재귀적으로 포함한다.
+            # 일반 HWPX 표는 문단(run) 안에 있으므로 그 문단 처리에서 이미 읽힌다.
+            # 문단 밖에 직접 놓인 특수 표만 여기에서 처리한다.
+            if _has_ancestor_with_name(elem, "p", parent_map):
+                continue
             if _has_ancestor_with_name(elem, "tbl", parent_map):
                 continue
             lines.extend(_extract_hwpx_table(elem))
-            continue
-
-        if name != "p":
-            continue
-
-        if _has_ancestor_with_name(elem, "tbl", parent_map):
-            continue
-
-        text = _extract_paragraph_content(elem)
-        if text:
-            lines.append(text)
 
     if not lines:
         fallback = _extract_text_no_tables(root)
