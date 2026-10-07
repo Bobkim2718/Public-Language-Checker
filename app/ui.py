@@ -50,7 +50,7 @@ class DocumentTextEdit(QTextEdit):
                 for url in event.mimeData().urls()
                 if url.isLocalFile()
             ]
-            files = supported_files(local_paths, SUPPORTED_EXTENSIONS, MAX_BATCH_FILES)
+            files = supported_files(local_paths, SUPPORTED_EXTENSIONS)
             if files:
                 event.acceptProposedAction()
                 return
@@ -63,7 +63,7 @@ class DocumentTextEdit(QTextEdit):
                 for url in event.mimeData().urls()
                 if url.isLocalFile()
             ]
-            files = supported_files(local_paths, SUPPORTED_EXTENSIONS, MAX_BATCH_FILES)
+            files = supported_files(local_paths, SUPPORTED_EXTENSIONS)
             if files:
                 self.filesDropped.emit(files)
                 event.acceptProposedAction()
@@ -703,7 +703,7 @@ class MainWindow(QMainWindow):
                 for url in event.mimeData().urls()
                 if url.isLocalFile()
             ]
-            files = supported_files(local_paths, SUPPORTED_EXTENSIONS, MAX_BATCH_FILES)
+            files = supported_files(local_paths, SUPPORTED_EXTENSIONS)
             if files:
                 event.acceptProposedAction()
                 return
@@ -716,7 +716,7 @@ class MainWindow(QMainWindow):
                 for url in event.mimeData().urls()
                 if url.isLocalFile()
             ]
-            files = supported_files(local_paths, SUPPORTED_EXTENSIONS, MAX_BATCH_FILES)
+            files = supported_files(local_paths, SUPPORTED_EXTENSIONS)
             if files:
                 self.handle_dropped_files(files)
                 event.acceptProposedAction()
