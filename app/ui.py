@@ -136,7 +136,8 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
 
         self.editor = DocumentTextEdit()
-        self.editor.filesDropped.connect(self.handle_dropped_files)\n        self.editor.unsupportedFilesDropped.connect(self.handle_unsupported_files)
+        self.editor.filesDropped.connect(self.handle_dropped_files)
+        self.editor.unsupportedFilesDropped.connect(self.handle_unsupported_files)
         self.editor.setPlaceholderText(
             "문서를 끌어 놓거나 [문서 열기]를 누르세요.\n"
             "2개 이상 파일을 한 번에 놓으면 파일 비교 분석을 시작합니다.\n"
