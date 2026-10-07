@@ -11,7 +11,8 @@ from docx.table import Table
 from docx.text.paragraph import Paragraph
 from pypdf import PdfReader
 
-from .hancom_loader import HancomAutomationError, convert_hwp_to_hwpx\nfrom .hwp_binary import HWPBinaryError, HWPBinaryUnsupported, extract_hwp_text
+from .hancom_loader import HancomAutomationError, convert_hwp_to_hwpx
+from .hwp_binary import HWPBinaryError, HWPBinaryUnsupported, extract_hwp_text
 
 
 SUPPORTED_EXTENSIONS = {".txt", ".docx", ".pdf", ".hwp", ".hwpx"}
