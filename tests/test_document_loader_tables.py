@@ -1,0 +1,65 @@
+from pathlib import Path
+import zipfile
+
+from docx import Document
+
+from app.document_loader import load_document
+
+
+def test_hwpx_preserves_table_rows(tmp_path: Path):
+    path = tmp_path / "sample.hwpx"
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <hs:sec xmlns:hs="urn:section" xmlns:hp="urn:para">
+      <hp:p><hp:run><hp:t>사업 운영 계획</hp:t></hp:run></hp:p>
+      <hp:tbl>
+        <hp:tr>
+          <hp:tc><hp:subList><hp:p><hp:run><hp:t>항목</hp:t></hp:run></hp:p></hp:subList></hp:tc>
+          <hp:tc><hp:subList><hp:p><hp:run><hp:t>세부 내용</hp:t></hp:run></hp:p></hp:subList></hp:tc>
+        </hp:tr>
+        <hp:tr>
+          <hp:tc><hp:subList><hp:p><hp:run><hp:t>모니터링</hp:t></hp:run></hp:p></hp:subList></hp:tc>
+          <hp:tc>
+            <hp:subList>
+              <hp:p><hp:run><hp:t>정기 점검</hp:t></hp:run></hp:p>
+              <hp:p><hp:run><hp:t>결과 피드백</hp:t></hp:run></hp:p>
+            </hp:subList>
+          </hp:tc>
+        </hp:tr>
+      </hp:tbl>
+      <hp:p><hp:run><hp:t>이상 끝.</hp:t></hp:run></hp:p>
+    </hs:sec>
+    """
+
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("Contents/section0.xml", xml)
+
+    text = load_document(path)
+
+    assert "사업 운영 계획" in text
+    assert "항목 | 세부 내용" in text
+    assert "모니터링 | 정기 점검 / 결과 피드백" in text
+    assert text.count("모니터링") == 1
+    assert "이상 끝." in text
+
+
+def test_docx_preserves_body_table_order(tmp_path: Path):
+    path = tmp_path / "sample.docx"
+    doc = Document()
+    doc.add_paragraph("표 앞 문단")
+    table = doc.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "항목"
+    table.cell(0, 1).text = "내용"
+    table.cell(1, 0).text = "피드백"
+    table.cell(1, 1).text = "의견 반영"
+    doc.add_paragraph("표 뒤 문단")
+    doc.save(path)
+
+    text = load_document(path)
+    lines = text.splitlines()
+
+    assert lines == [
+        "표 앞 문단",
+        "항목 | 내용",
+        "피드백 | 의견 반영",
+        "표 뒤 문단",
+    ]
