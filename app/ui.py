@@ -81,6 +81,9 @@ class MainWindow(QMainWindow):
         update_button = QPushButton("업데이트 파일 가져오기")
         update_button.clicked.connect(self.import_update)
 
+        online_update_button = QPushButton("온라인 업데이트 확인")
+        online_update_button.clicked.connect(self.check_online_update)
+
         term_button = QPushButton("사용자 용어 추가")
         term_button.clicked.connect(self.add_user_term)
 
@@ -88,7 +91,14 @@ class MainWindow(QMainWindow):
         api_button.clicked.connect(self.lookup_api)
 
         top_buttons = QHBoxLayout()
-        for button in (open_button, analyze_button, update_button, term_button, api_button):
+        for button in (
+            open_button,
+            analyze_button,
+            update_button,
+            online_update_button,
+            term_button,
+            api_button,
+        ):
             top_buttons.addWidget(button)
         top_buttons.addStretch(1)
 
@@ -224,6 +234,28 @@ class MainWindow(QMainWindow):
         )
         if self.editor.toPlainText().strip():
             self.analyze()
+
+    def check_online_update(self) -> None:
+        try:
+            changed, version = self.store.check_managed_update()
+        except Exception as exc:
+            QMessageBox.information(self, "온라인 업데이트", str(exc))
+            return
+
+        if changed:
+            QMessageBox.information(
+                self,
+                "온라인 업데이트 완료",
+                f"새 사전·규칙 데이터를 설치했습니다.\n버전: {version}",
+            )
+            if self.editor.toPlainText().strip():
+                self.analyze()
+        else:
+            QMessageBox.information(
+                self,
+                "온라인 업데이트",
+                f"이미 최신 데이터입니다.\n버전: {version}",
+            )
 
     def add_user_term(self) -> None:
         term, ok = QInputDialog.getText(self, "사용자 용어 추가", "검토할 용어:")
