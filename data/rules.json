@@ -18,7 +18,7 @@
   "repeat_scoring": {
     "repeat_cap": 5,
     "official_base": 0.6,
-    "official_repeat": 0.12,
+    "official_repeat": 0.2,
     "custom_base": {
       "change": 1.5,
       "review": 0.8,
