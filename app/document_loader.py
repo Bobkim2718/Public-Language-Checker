@@ -11,7 +11,7 @@ from docx.table import Table
 from docx.text.paragraph import Paragraph
 from pypdf import PdfReader
 
-from .hancom_loader import HancomAutomationError, convert_hwp_to_hwpx
+from .hancom_loader import HancomAutomationError, convert_hwp_to_hwpx\nfrom .hwp_binary import HWPBinaryError, HWPBinaryUnsupported, extract_hwp_text
 
 
 SUPPORTED_EXTENSIONS = {".txt", ".docx", ".pdf", ".hwp", ".hwpx"}
@@ -102,8 +102,26 @@ def _load_pdf(path: Path) -> str:
 
 
 def _load_hwp(path: Path) -> str:
-    """레거시 HWP는 설치된 한/글로 임시 HWPX 변환 후 동일 파서로 처리."""
-    converted = convert_hwp_to_hwpx(path)
+    """HWP 5.x를 직접 파싱하고, 필요할 때만 설치된 한/글을 보조 경로로 사용."""
+    direct_error: Exception | None = None
+
+    try:
+        return extract_hwp_text(path)
+    except (HWPBinaryUnsupported, HWPBinaryError) as exc:
+        direct_error = exc
+
+    # 직접 파싱이 불가능한 구형/보호 문서는 설치된 한/글이 있으면 HWPX 변환을 시도한다.
+    try:
+        converted = convert_hwp_to_hwpx(path)
+    except HancomAutomationError:
+        if direct_error is not None:
+            raise DocumentLoadError(
+                f"{direct_error}\n\n"
+                "이 문서는 직접 분석하지 못했고, 설치된 한/글 Automation도 사용할 수 없습니다. "
+                "가능하면 한/글에서 HWPX로 저장한 뒤 다시 열어 주세요."
+            ) from direct_error
+        raise
+
     temp_dir = converted.parent
     try:
         return _load_hwpx(converted)
