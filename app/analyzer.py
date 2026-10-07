@@ -428,7 +428,7 @@ def _term_penalty(
 
     if source_type == "OFFICIAL":
         base = float(config.get("official_base", 0.6))
-        repeat_unit = float(config.get("official_repeat", 0.12))
+        repeat_unit = float(config.get("official_repeat", 0.20))
         return base + repeat_unit * repeat_count
 
     base_by_severity = config.get(
