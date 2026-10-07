@@ -29,11 +29,11 @@ def make_text(target_mb: float) -> str:
 
 
 def measure_one(analyzer: PublicLanguageAnalyzer, target_mb: float) -> dict:
+    gc.collect()
+    tracemalloc.start()
     text = make_text(target_mb)
     actual_bytes = len(text.encode("utf-8"))
 
-    gc.collect()
-    tracemalloc.start()
     started = time.perf_counter()
     result = analyzer.analyze(text)
     elapsed = time.perf_counter() - started
@@ -55,11 +55,11 @@ def measure_one(analyzer: PublicLanguageAnalyzer, target_mb: float) -> dict:
 
 
 def measure_batch(analyzer: PublicLanguageAnalyzer, files: int, each_mb: float) -> dict:
+    gc.collect()
+    tracemalloc.start()
     texts = [make_text(each_mb) for _ in range(files)]
     total_bytes = sum(len(x.encode("utf-8")) for x in texts)
 
-    gc.collect()
-    tracemalloc.start()
     started = time.perf_counter()
 
     retained = []
@@ -100,12 +100,13 @@ def main() -> None:
         )
 
     print("=== 20 FILE BATCH BENCHMARK ===")
-    row = measure_batch(analyzer, 20, 0.5)
     print("files\teach_MB\ttotal_MB\tseconds\tpeak_MB\tissues")
-    print(
-        f"{row['files']}\t{row['each_mb']}\t{row['total_mb']:.2f}\t"
-        f"{row['seconds']:.3f}\t{row['peak_mb']:.2f}\t{row['issues']}"
-    )
+    for each_mb in (0.5, 1.0):
+        row = measure_batch(analyzer, 20, each_mb)
+        print(
+            f"{row['files']}\t{row['each_mb']}\t{row['total_mb']:.2f}\t"
+            f"{row['seconds']:.3f}\t{row['peak_mb']:.2f}\t{row['issues']}"
+        )
 
 
 if __name__ == "__main__":
