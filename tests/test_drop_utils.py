@@ -42,3 +42,17 @@ def test_supported_files_returns_multiple_up_to_limit(tmp_path: Path):
 
     assert len(result) == 3
     assert result[0].endswith("0.txt")
+
+
+def test_hwp_is_supported_for_drop(tmp_path: Path):
+    from app.drop_utils import supported_files
+
+    path = tmp_path / "document.hwp"
+    path.write_bytes(b"hwp")
+
+    result = supported_files(
+        [path],
+        {".hwp", ".hwpx", ".docx", ".pdf", ".txt"},
+    )
+
+    assert result == [str(path.resolve())]
