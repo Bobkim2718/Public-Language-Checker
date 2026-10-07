@@ -63,3 +63,78 @@ def test_docx_preserves_body_table_order(tmp_path: Path):
         "피드백 | 의견 반영",
         "표 뒤 문단",
     ]
+
+
+def test_hwpx_reconstructs_merged_cell_columns(tmp_path: Path):
+    path = tmp_path / "merged.hwpx"
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <hs:sec xmlns:hs="urn:section" xmlns:hp="urn:para">
+      <hp:p>
+        <hp:run>
+          <hp:tbl colCnt="3" rowCnt="2">
+            <hp:tr>
+              <hp:tc>
+                <hp:subList><hp:p><hp:run><hp:t>구분</hp:t></hp:run></hp:p></hp:subList>
+                <hp:cellAddr colAddr="0" rowAddr="0"/>
+                <hp:cellSpan colSpan="1" rowSpan="1"/>
+              </hp:tc>
+              <hp:tc>
+                <hp:subList><hp:p><hp:run><hp:t>운영 내용</hp:t></hp:run></hp:p></hp:subList>
+                <hp:cellAddr colAddr="1" rowAddr="0"/>
+                <hp:cellSpan colSpan="2" rowSpan="1"/>
+              </hp:tc>
+            </hp:tr>
+            <hp:tr>
+              <hp:tc>
+                <hp:subList><hp:p><hp:run><hp:t>1</hp:t></hp:run></hp:p></hp:subList>
+                <hp:cellAddr colAddr="0" rowAddr="1"/>
+              </hp:tc>
+              <hp:tc>
+                <hp:subList><hp:p><hp:run><hp:t>피드백</hp:t></hp:run></hp:p></hp:subList>
+                <hp:cellAddr colAddr="1" rowAddr="1"/>
+              </hp:tc>
+              <hp:tc>
+                <hp:subList><hp:p><hp:run><hp:t>모니터링</hp:t></hp:run></hp:p></hp:subList>
+                <hp:cellAddr colAddr="2" rowAddr="1"/>
+              </hp:tc>
+            </hp:tr>
+          </hp:tbl>
+        </hp:run>
+      </hp:p>
+    </hs:sec>
+    """
+
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("Contents/section0.xml", xml)
+
+    text = load_document(path)
+
+    assert "구분 | 운영 내용" in text
+    assert "1 | 피드백 | 모니터링" in text
+
+
+def test_hwp_uses_local_hancom_conversion(tmp_path: Path, monkeypatch):
+    source = tmp_path / "sample.hwp"
+    source.write_bytes(b"fake-hwp")
+
+    converted_dir = tmp_path / "converted"
+    converted_dir.mkdir()
+    converted = converted_dir / "sample.hwpx"
+
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <hs:sec xmlns:hs="urn:section" xmlns:hp="urn:para">
+      <hp:p><hp:run><hp:t>한글 변환 성공</hp:t></hp:run></hp:p>
+    </hs:sec>
+    """
+    with zipfile.ZipFile(converted, "w") as archive:
+        archive.writestr("Contents/section0.xml", xml)
+
+    monkeypatch.setattr(
+        "app.document_loader.convert_hwp_to_hwpx",
+        lambda _path: converted,
+    )
+
+    text = load_document(source)
+
+    assert "한글 변환 성공" in text
+    assert not converted_dir.exists()
