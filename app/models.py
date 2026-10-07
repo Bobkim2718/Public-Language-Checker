@@ -16,6 +16,8 @@ class Issue:
     sentence: str = ""
     start: int = -1
     end: int = -1
+    occurrence_count: int = 1
+    positions: List[tuple[int, int]] = field(default_factory=list)
 
 
 @dataclass
