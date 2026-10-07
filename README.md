@@ -110,7 +110,7 @@ pyinstaller --noconfirm --clean --onefile --windowed --name PublicLanguageChecke
 
 ### 4. 관리형 온라인 업데이트
 
-`data/update_sources.json`의 `managed_update_manifest`에 기관이 관리하는 HTTPS manifest 주소를 넣으면 **온라인 업데이트 확인** 기능을 사용할 수 있습니다.
+`data/update_sources.json`은 현재 이 저장소의 `main/updates/manifest.json`을 관리형 업데이트 주소로 사용합니다. 따라서 **온라인 업데이트 확인** 기능으로 새 사전·규칙을 받을 수 있습니다. 기관이 자체 서버를 운영할 경우 해당 HTTPS manifest 주소로 바꿀 수 있습니다.
 
 manifest 예:
 
