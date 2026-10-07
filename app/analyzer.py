@@ -12,13 +12,69 @@ CATEGORY_NORMS = "어문규범"
 CATEGORY_HANGUL = "한글 사용"
 
 
+class _TrieNode:
+    __slots__ = ("children", "entry")
+
+    def __init__(self) -> None:
+        self.children: dict[str, "_TrieNode"] = {}
+        self.entry: dict | None = None
+
+
+class TermMatcher:
+    """긴 표현 우선 비중첩 사전 검색기.
+
+    3천여 개 표제어를 문서마다 각각 find() 하지 않고,
+    문서를 왼쪽에서 오른쪽으로 한 번 훑으며 가장 긴 일치 표현을 찾는다.
+    """
+
+    def __init__(self, terms: list[dict]) -> None:
+        self.root = _TrieNode()
+        for entry in terms:
+            term = str(entry.get("term", "")).strip()
+            if not term:
+                continue
+            node = self.root
+            for char in term.lower():
+                node = node.children.setdefault(char, _TrieNode())
+            node.entry = entry
+
+    def find(self, text: str) -> list[tuple[int, int, dict]]:
+        lowered = text.lower()
+        matches: list[tuple[int, int, dict]] = []
+        i = 0
+        n = len(text)
+
+        while i < n:
+            node = self.root
+            j = i
+            best: tuple[int, dict] | None = None
+
+            while j < n:
+                node = node.children.get(lowered[j])
+                if node is None:
+                    break
+                j += 1
+                if node.entry is not None:
+                    term = str(node.entry.get("term", ""))
+                    if _valid_ascii_boundary(text, term, i, j):
+                        best = (j, node.entry)
+
+            if best is not None:
+                end, entry = best
+                matches.append((i, end, entry))
+                i = end
+            else:
+                i += 1
+
+        return matches
+
+
 class PublicLanguageAnalyzer:
     def __init__(self, terms: list[dict], rules: dict) -> None:
-        self.terms = sorted(
-            (x for x in terms if str(x.get("term", "")).strip()),
-            key=lambda x: len(str(x.get("term", ""))),
-            reverse=True,
-        )
+        self.terms = [
+            x for x in terms if str(x.get("term", "")).strip()
+        ]
+        self.matcher = TermMatcher(self.terms)
         self.rules = rules
         self.weights = rules.get(
             "weights",
@@ -58,7 +114,11 @@ class PublicLanguageAnalyzer:
         }
 
         severity_counts = Counter(issue.severity for issue in issues)
-        source_counts = Counter(issue.source_type for issue in issues if issue.category == CATEGORY_TERMS)
+        source_counts = Counter(
+            issue.source_type
+            for issue in issues
+            if issue.category == CATEGORY_TERMS
+        )
         official_unique = len(
             {
                 issue.term.casefold()
@@ -95,43 +155,30 @@ class PublicLanguageAnalyzer:
             "reference": "참고",
         }
 
-        lowered = text.lower()
-        occupied = bytearray(len(text))
-
-        for entry in self.terms:
+        grouped: dict[str, tuple[dict, list[tuple[int, int]]]] = {}
+        for start, end, entry in self.matcher.find(text):
             term = str(entry.get("term", "")).strip()
-            if not term:
-                continue
+            key = term.casefold()
+            if key not in grouped:
+                grouped[key] = (entry, [])
+            grouped[key][1].append((start, end))
 
-            matches: list[tuple[int, int]] = []
-            needle = term.lower()
-            cursor = 0
-            while True:
-                start = lowered.find(needle, cursor)
-                if start < 0:
-                    break
-                end = start + len(term)
-                cursor = max(start + 1, end)
-
-                if not _valid_ascii_boundary(text, term, start, end):
-                    continue
-                if any(occupied[start:end]):
-                    continue
-
-                occupied[start:end] = b"\x01" * (end - start)
-                matches.append((start, end))
-
-            if not matches:
-                continue
-
+        for entry, spans in grouped.values():
+            term = str(entry.get("term", "")).strip()
             severity = str(entry.get("severity", "review"))
             source_type = str(entry.get("source_type", "CUSTOM")).upper()
             source = str(entry.get("source", "사전 데이터"))
             alt_text = str(entry.get("alt_text", "")).strip()
-            alternatives = [str(x) for x in entry.get("alternatives", []) if str(x).strip()]
-            suggestion = alt_text or ", ".join(alternatives) or "문맥에 맞는 쉬운 표현을 검토하세요."
+            alternatives = [
+                str(x) for x in entry.get("alternatives", []) if str(x).strip()
+            ]
+            suggestion = (
+                alt_text
+                or ", ".join(alternatives)
+                or "문맥에 맞는 쉬운 표현을 검토하세요."
+            )
 
-            for start, end in matches:
+            for start, end in spans:
                 found = text[start:end]
                 issues.append(
                     Issue(
@@ -149,11 +196,9 @@ class PublicLanguageAnalyzer:
                 )
 
             if source_type == "OFFICIAL":
-                # 공식 사전 등재 자체는 '오류'가 아니라 검토 신호이므로
-                # 반복 횟수보다 서로 다른 공식 용어의 종류에 비중을 둔다.
-                penalty += 0.6 + 0.15 * max(0, min(len(matches), 5) - 1)
+                penalty += 0.6 + 0.15 * max(0, min(len(spans), 5) - 1)
             else:
-                penalty += severity_cost.get(severity, 0.8) * min(len(matches), 3)
+                penalty += severity_cost.get(severity, 0.8) * min(len(spans), 3)
 
         return round(min(self.weights.get(CATEGORY_TERMS, 35), penalty))
 
@@ -258,12 +303,13 @@ class PublicLanguageAnalyzer:
 
         for match in token_pattern.finditer(text):
             if _overlaps_any(match.start(), match.end(), term_spans):
-                # 같은 표현이 공식 사전 등재어로 이미 검출되었다면 이중 감점하지 않는다.
                 continue
 
             token = match.group(0)
             lowered = token.lower()
-            if lowered in seen or _looks_like_url_or_email(text, match.start(), match.end()):
+            if lowered in seen or _looks_like_url_or_email(
+                text, match.start(), match.end()
+            ):
                 continue
             seen.add(lowered)
 
@@ -301,7 +347,6 @@ class PublicLanguageAnalyzer:
             penalty += 1
 
         return min(self.weights.get(CATEGORY_HANGUL, 10), penalty)
-
 
 def _valid_ascii_boundary(text: str, term: str, start: int, end: int) -> bool:
     if not term:
