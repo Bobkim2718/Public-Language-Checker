@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 
@@ -75,14 +77,85 @@ class DataStore:
             json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
-    def import_update_bundle(self, path: str | Path) -> str:
-        source = Path(path)
-        bundle = self._read_json(source, None)
+    def current_bundle_version(self) -> str | None:
+        bundle = self._read_json(self.synced_bundle_path, {})
+        if isinstance(bundle, dict):
+            value = bundle.get("version")
+            return str(value) if value is not None else None
+        return None
+
+    def install_update_bundle(self, bundle: dict) -> str:
         _validate_bundle(bundle)
         self.synced_bundle_path.write_text(
             json.dumps(bundle, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         return str(bundle.get("version", "버전 정보 없음"))
+
+    def import_update_bundle(self, path: str | Path) -> str:
+        source = Path(path)
+        bundle = self._read_json(source, None)
+        return self.install_update_bundle(bundle)
+
+    def check_managed_update(self, timeout: float = 10.0) -> tuple[bool, str]:
+        config = self._read_json(PACKAGE_DATA_DIR / "update_sources.json", {})
+        manifest_url = config.get("managed_update_manifest")
+        if not manifest_url:
+            raise DataStoreError(
+                "관리형 업데이트 주소가 아직 설정되지 않았습니다. "
+                "현재는 [업데이트 파일 가져오기]로 오프라인 업데이트를 사용할 수 있습니다."
+            )
+
+        _require_https(manifest_url, "업데이트 manifest")
+        response = requests.get(
+            manifest_url,
+            timeout=timeout,
+            headers={"User-Agent": "PublicLanguageChecker/0.1"},
+        )
+        response.raise_for_status()
+
+        try:
+            manifest = response.json()
+        except ValueError as exc:
+            raise DataStoreError("업데이트 manifest를 JSON으로 해석하지 못했습니다.") from exc
+
+        if not isinstance(manifest, dict):
+            raise DataStoreError("업데이트 manifest 형식이 올바르지 않습니다.")
+
+        version = str(manifest.get("version", "")).strip()
+        bundle_url = str(manifest.get("bundle_url", "")).strip()
+        expected_sha256 = str(manifest.get("sha256", "")).strip().lower()
+
+        if not version or not bundle_url:
+            raise DataStoreError("업데이트 manifest에 version 또는 bundle_url이 없습니다.")
+
+        if version == self.current_bundle_version():
+            return False, version
+
+        _require_https(bundle_url, "업데이트 번들")
+        bundle_response = requests.get(
+            bundle_url,
+            timeout=timeout,
+            headers={"User-Agent": "PublicLanguageChecker/0.1"},
+        )
+        bundle_response.raise_for_status()
+        raw = bundle_response.content
+
+        if expected_sha256:
+            actual = hashlib.sha256(raw).hexdigest()
+            if actual != expected_sha256:
+                raise DataStoreError("업데이트 파일 무결성(SHA-256) 검증에 실패했습니다.")
+
+        try:
+            bundle = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise DataStoreError("업데이트 번들을 JSON으로 해석하지 못했습니다.") from exc
+
+        installed = self.install_update_bundle(bundle)
+        if installed != version:
+            raise DataStoreError(
+                f"manifest 버전({version})과 번들 버전({installed})이 일치하지 않습니다."
+            )
+        return True, installed
 
     def lookup_official_api(self, keyword: str, timeout: float = 8.0) -> list[dict]:
         config = self._read_json(PACKAGE_DATA_DIR / "update_sources.json", {})
@@ -133,3 +206,9 @@ def _deep_merge(base: dict, incoming: dict) -> dict:
         else:
             result[key] = value
     return result
+
+
+def _require_https(url: str, label: str) -> None:
+    parsed = urlparse(url)
+    if parsed.scheme.lower() != "https":
+        raise DataStoreError(f"{label} 주소는 HTTPS여야 합니다.")
