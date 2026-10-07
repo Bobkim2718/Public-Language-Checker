@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QTextCursor
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -25,6 +25,40 @@ from .analyzer import PublicLanguageAnalyzer
 from .data_store import DataStore, DataStoreError
 from .document_loader import DocumentLoadError, SUPPORTED_EXTENSIONS, load_document
 from .models import Issue
+from .drop_utils import first_supported_file
+
+
+class DocumentTextEdit(QTextEdit):
+    """파일 드롭은 경로 문자열 삽입 대신 실제 문서 열기로 전달한다."""
+
+    fileDropped = Signal(str)
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        if event.mimeData().hasUrls():
+            local_paths = [
+                url.toLocalFile()
+                for url in event.mimeData().urls()
+                if url.isLocalFile()
+            ]
+            path = first_supported_file(local_paths, SUPPORTED_EXTENSIONS)
+            if path:
+                event.acceptProposedAction()
+                return
+        super().dragEnterEvent(event)
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        if event.mimeData().hasUrls():
+            local_paths = [
+                url.toLocalFile()
+                for url in event.mimeData().urls()
+                if url.isLocalFile()
+            ]
+            path = first_supported_file(local_paths, SUPPORTED_EXTENSIONS)
+            if path:
+                self.fileDropped.emit(path)
+                event.acceptProposedAction()
+                return
+        super().dropEvent(event)
 
 
 class MainWindow(QMainWindow):
@@ -34,11 +68,11 @@ class MainWindow(QMainWindow):
         self.current_path: Path | None = None
         self.current_issues: list[Issue] = []
 
-        self.setWindowTitle("공공언어 검사기 v2.1")
+        self.setWindowTitle("공공언어 검사기 v2.2")
         self.resize(1380, 860)
         self.setAcceptDrops(True)
 
-        self.editor = QTextEdit()
+        self.editor = DocumentTextEdit()\n        self.editor.fileDropped.connect(self._load_dropped_file)
         self.editor.setPlaceholderText(
             "문서를 끌어 놓거나 [문서 열기]를 누르세요.\n"
             "텍스트를 직접 붙여 넣고 검사할 수도 있습니다."
@@ -131,7 +165,7 @@ class MainWindow(QMainWindow):
         splitter.addWidget(right)
         splitter.setSizes([660, 720])
 
-        title = QLabel("공공언어 검사기 v2.1")
+        title = QLabel("공공언어 검사기 v2.2")
         title_font = title.font()
         title_font.setPointSize(19)
         title_font.setBold(True)
@@ -173,6 +207,9 @@ class MainWindow(QMainWindow):
         )
         if path:
             self._load_path(Path(path))
+
+    def _load_dropped_file(self, path: str) -> None:
+        self._load_path(Path(path))
 
     def _load_path(self, path: Path) -> None:
         try:
@@ -359,14 +396,27 @@ class MainWindow(QMainWindow):
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         if event.mimeData().hasUrls():
-            paths = [Path(url.toLocalFile()) for url in event.mimeData().urls()]
-            if any(path.suffix.lower() in SUPPORTED_EXTENSIONS for path in paths):
-                event.acceptProposedAction()
-
-    def dropEvent(self, event: QDropEvent) -> None:
-        for url in event.mimeData().urls():
-            path = Path(url.toLocalFile())
-            if path.suffix.lower() in SUPPORTED_EXTENSIONS:
-                self._load_path(path)
+            local_paths = [
+                url.toLocalFile()
+                for url in event.mimeData().urls()
+                if url.isLocalFile()
+            ]
+            path = first_supported_file(local_paths, SUPPORTED_EXTENSIONS)
+            if path:
                 event.acceptProposedAction()
                 return
+        super().dragEnterEvent(event)
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        if event.mimeData().hasUrls():
+            local_paths = [
+                url.toLocalFile()
+                for url in event.mimeData().urls()
+                if url.isLocalFile()
+            ]
+            path = first_supported_file(local_paths, SUPPORTED_EXTENSIONS)
+            if path:
+                self._load_path(Path(path))
+                event.acceptProposedAction()
+                return
+        super().dropEvent(event)
