@@ -107,3 +107,72 @@ def test_flags_long_sentence():
     text = "이 사업은 " + ("학생의 학습 활동을 지원하고 " * 10) + "운영한다."
     result = analyzer.analyze(text)
     assert result.scores["알기 쉬운 문장"] < 35
+
+
+def test_repeated_official_term_is_aggregated_into_one_finding():
+    analyzer = PublicLanguageAnalyzer(
+        [
+            {
+                "term": "피드백",
+                "alternatives": ["반응", "회신"],
+                "alt_text": "반응, 회신",
+                "severity": "review",
+                "source": "official",
+                "source_type": "OFFICIAL",
+            }
+        ],
+        RULES,
+    )
+
+    result = analyzer.analyze(
+        "피드백을 반영한다. 피드백을 정리한다. 피드백을 다시 확인한다."
+    )
+
+    term_issues = [x for x in result.issues if x.category == "알기 쉬운 용어"]
+
+    assert len(term_issues) == 1
+    assert term_issues[0].occurrence_count == 3
+    assert len(term_issues[0].positions) == 3
+    assert "3회" in term_issues[0].message
+    assert result.stats["official_unique"] == 1
+    assert result.stats["official_hits"] == 3
+    assert result.stats["term_unique"] == 1
+    assert result.stats["term_occurrences"] == 3
+
+
+def test_repetition_penalty_is_dampened_not_linear():
+    analyzer = PublicLanguageAnalyzer(
+        [
+            {
+                "term": "피드백",
+                "alternatives": ["반응"],
+                "alt_text": "반응",
+                "severity": "review",
+                "source": "official",
+                "source_type": "OFFICIAL",
+            }
+        ],
+        RULES,
+    )
+
+    once = analyzer.analyze("피드백을 반영한다.")
+    repeated = analyzer.analyze(" ".join(["피드백을 반영한다."] * 10))
+
+    once_penalty = 35 - once.scores["알기 쉬운 용어"]
+    repeated_penalty = 35 - repeated.scores["알기 쉬운 용어"]
+
+    assert once_penalty >= 1
+    assert repeated_penalty <= once_penalty + 1
+    assert repeated.stats["official_hits"] == 10
+    assert len([x for x in repeated.issues if x.category == "알기 쉬운 용어"]) == 1
+
+
+def test_repeated_unknown_latin_token_is_aggregated():
+    analyzer = PublicLanguageAnalyzer([], RULES)
+
+    result = analyzer.analyze("XYZ 계획과 XYZ 운영, XYZ 결과를 검토한다.")
+
+    hangul = [x for x in result.issues if x.category == "한글 사용"]
+    assert len(hangul) == 1
+    assert hangul[0].occurrence_count == 3
+    assert "3회" in hangul[0].message

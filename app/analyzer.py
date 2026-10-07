@@ -21,11 +21,7 @@ class _TrieNode:
 
 
 class TermMatcher:
-    """긴 표현 우선 비중첩 사전 검색기.
-
-    3천여 개 표제어를 문서마다 각각 find() 하지 않고,
-    문서를 왼쪽에서 오른쪽으로 한 번 훑으며 가장 긴 일치 표현을 찾는다.
-    """
+    """긴 표현 우선 비중첩 사전 검색기."""
 
     def __init__(self, terms: list[dict]) -> None:
         self.root = _TrieNode()
@@ -71,9 +67,7 @@ class TermMatcher:
 
 class PublicLanguageAnalyzer:
     def __init__(self, terms: list[dict], rules: dict) -> None:
-        self.terms = [
-            x for x in terms if str(x.get("term", "")).strip()
-        ]
+        self.terms = [x for x in terms if str(x.get("term", "")).strip()]
         self.matcher = TermMatcher(self.terms)
         self.rules = rules
         self.weights = rules.get(
@@ -95,9 +89,11 @@ class PublicLanguageAnalyzer:
         norm_penalty = self._check_norms(normalized, issues)
 
         term_spans = [
-            (issue.start, issue.end)
+            span
             for issue in issues
-            if issue.category == CATEGORY_TERMS and issue.start >= 0
+            if issue.category == CATEGORY_TERMS
+            for span in (issue.positions or [(issue.start, issue.end)])
+            if span[0] >= 0 and span[1] > span[0]
         ]
         hangul_penalty = self._check_hangul(normalized, issues, term_spans)
 
@@ -109,16 +105,21 @@ class PublicLanguageAnalyzer:
         }
 
         scores = {
-            category: max(0, int(weight) - min(int(weight), int(penalties.get(category, 0))))
+            category: max(
+                0,
+                int(weight) - min(int(weight), round(float(penalties.get(category, 0)))),
+            )
             for category, weight in self.weights.items()
         }
 
         severity_counts = Counter(issue.severity for issue in issues)
-        source_counts = Counter(
-            issue.source_type
-            for issue in issues
-            if issue.category == CATEGORY_TERMS
-        )
+
+        source_occurrences: Counter[str] = Counter()
+        for issue in issues:
+            if issue.category != CATEGORY_TERMS:
+                continue
+            source_occurrences[issue.source_type] += max(1, issue.occurrence_count)
+
         official_unique = len(
             {
                 issue.term.casefold()
@@ -128,6 +129,20 @@ class PublicLanguageAnalyzer:
                 and issue.term
             }
         )
+        term_unique = len(
+            {
+                issue.term.casefold()
+                for issue in issues
+                if issue.category == CATEGORY_TERMS and issue.term
+            }
+        )
+        term_occurrences = sum(
+            max(1, issue.occurrence_count)
+            for issue in issues
+            if issue.category == CATEGORY_TERMS
+        )
+        total_occurrences = sum(max(1, issue.occurrence_count) for issue in issues)
+
         return AnalysisResult(
             total_score=sum(scores.values()),
             scores=scores,
@@ -135,20 +150,22 @@ class PublicLanguageAnalyzer:
             stats={
                 "characters": len(normalized),
                 "issues": len(issues),
+                "occurrences": total_occurrences,
                 "change": severity_counts.get("변경 권장", 0),
                 "review": severity_counts.get("검토 권장", 0),
                 "reference": severity_counts.get("참고", 0),
-                "official_hits": source_counts.get("OFFICIAL", 0),
+                "term_unique": term_unique,
+                "term_occurrences": term_occurrences,
+                "official_hits": source_occurrences.get("OFFICIAL", 0),
                 "official_unique": official_unique,
-                "custom_hits": source_counts.get("CUSTOM", 0),
-                "managed_hits": source_counts.get("MANAGED", 0),
-                "user_hits": source_counts.get("USER", 0),
+                "custom_hits": source_occurrences.get("CUSTOM", 0),
+                "managed_hits": source_occurrences.get("MANAGED", 0),
+                "user_hits": source_occurrences.get("USER", 0),
             },
         )
 
-    def _check_terms(self, text: str, issues: list[Issue]) -> int:
+    def _check_terms(self, text: str, issues: list[Issue]) -> float:
         penalty = 0.0
-        severity_cost = {"change": 1.5, "review": 0.8, "reference": 0.2}
         severity_label = {
             "change": "변경 권장",
             "review": "검토 권장",
@@ -178,35 +195,46 @@ class PublicLanguageAnalyzer:
                 or "문맥에 맞는 쉬운 표현을 검토하세요."
             )
 
-            for start, end in spans:
-                found = text[start:end]
-                issues.append(
-                    Issue(
-                        category=CATEGORY_TERMS,
-                        severity=severity_label.get(severity, "검토 권장"),
-                        message=f"‘{found}’ 표현을 검토해 보세요.",
-                        suggestion=suggestion,
-                        evidence=_source_label(source_type, source),
-                        source_type=source_type,
-                        term=term,
-                        sentence=_sentence_around(text, start),
-                        start=start,
-                        end=end,
-                    )
+            first_start, first_end = spans[0]
+            found = text[first_start:first_end]
+            count = len(spans)
+            message = (
+                f"‘{found}’ 표현을 검토해 보세요."
+                if count == 1
+                else f"‘{found}’ 표현이 문서에서 {count}회 사용되었습니다."
+            )
+
+            issues.append(
+                Issue(
+                    category=CATEGORY_TERMS,
+                    severity=severity_label.get(severity, "검토 권장"),
+                    message=message,
+                    suggestion=suggestion,
+                    evidence=_source_label(source_type, source),
+                    source_type=source_type,
+                    term=term,
+                    sentence=_sentence_around(text, first_start),
+                    start=first_start,
+                    end=first_end,
+                    occurrence_count=count,
+                    positions=list(spans),
                 )
+            )
 
-            if source_type == "OFFICIAL":
-                penalty += 0.6 + 0.15 * max(0, min(len(spans), 5) - 1)
-            else:
-                penalty += severity_cost.get(severity, 0.8) * min(len(spans), 3)
+            penalty += _term_penalty(
+                source_type=source_type,
+                severity=severity,
+                occurrence_count=count,
+                config=self.rules.get("repeat_scoring", {}),
+            )
 
-        return round(min(self.weights.get(CATEGORY_TERMS, 35), penalty))
+        return min(float(self.weights.get(CATEGORY_TERMS, 35)), penalty)
 
-    def _check_sentences(self, text: str, issues: list[Issue]) -> int:
+    def _check_sentences(self, text: str, issues: list[Issue]) -> float:
         config = self.rules.get("sentence", {})
         recommended = int(config.get("recommended_max_chars", 100))
         severe = int(config.get("severe_max_chars", 150))
-        penalty = 0
+        penalty = 0.0
 
         for sentence, start in _split_sentences(text):
             length = len(re.sub(r"\s+", " ", sentence).strip())
@@ -226,6 +254,7 @@ class PublicLanguageAnalyzer:
                     sentence=sentence.strip(),
                     start=start,
                     end=start + len(sentence),
+                    positions=[(start, start + len(sentence))],
                 )
             )
 
@@ -245,35 +274,51 @@ class PublicLanguageAnalyzer:
                     sentence=_sentence_around(text, match.start()),
                     start=match.start(),
                     end=match.end(),
+                    positions=[(match.start(), match.end())],
                 )
             )
             penalty += 1
 
-        return min(self.weights.get(CATEGORY_SENTENCES, 35), penalty)
+        return min(float(self.weights.get(CATEGORY_SENTENCES, 35)), penalty)
 
-    def _check_norms(self, text: str, issues: list[Issue]) -> int:
-        penalty = 0
+    def _check_norms(self, text: str, issues: list[Issue]) -> float:
+        penalty = 0.0
 
-        for match in re.finditer(r"(?m)[^\n]\s{2,}[^\n]", text):
+        spacing_matches = list(re.finditer(r"(?m)[^\n]\s{2,}[^\n]", text))
+        if spacing_matches:
+            positions = [(m.start(), m.end()) for m in spacing_matches]
+            first = spacing_matches[0]
+            count = len(spacing_matches)
             issues.append(
                 Issue(
                     category=CATEGORY_NORMS,
                     severity="검토 권장",
-                    message="문장 안에 불필요하게 연속된 공백이 있습니다.",
+                    message=(
+                        "문장 안에 불필요하게 연속된 공백이 있습니다."
+                        if count == 1
+                        else f"불필요하게 연속된 공백이 {count}곳에서 발견되었습니다."
+                    ),
                     suggestion="띄어쓰기를 확인하여 공백을 한 칸으로 정리하세요.",
                     evidence="어문규범 및 표기 일관성 검사",
                     source_type="RULE",
-                    sentence=_sentence_around(text, match.start()),
-                    start=match.start(),
-                    end=match.end(),
+                    sentence=_sentence_around(text, first.start()),
+                    start=first.start(),
+                    end=first.end(),
+                    occurrence_count=count,
+                    positions=positions,
                 )
             )
-            penalty += 1
+            repeat_config = self.rules.get("repeat_scoring", {})
+            norm_base = float(repeat_config.get("norm_base", 1.0))
+            norm_repeat = float(repeat_config.get("norm_repeat", 0.15))
+            repeat_cap = int(repeat_config.get("repeat_cap", 5))
+            penalty += norm_base + norm_repeat * min(max(0, count - 1), repeat_cap)
 
         latin_tokens = re.findall(r"\b[A-Za-z][A-Za-z0-9_-]{1,}\b", text)
         variants: dict[str, set[str]] = {}
         for token in latin_tokens:
             variants.setdefault(token.lower(), set()).add(token)
+
         for forms in variants.values():
             if len(forms) > 1:
                 ordered = sorted(forms)
@@ -289,43 +334,54 @@ class PublicLanguageAnalyzer:
                 )
                 penalty += 1
 
-        return min(self.weights.get(CATEGORY_NORMS, 20), penalty)
+        return min(float(self.weights.get(CATEGORY_NORMS, 20)), penalty)
 
     def _check_hangul(
         self,
         text: str,
         issues: list[Issue],
         term_spans: list[tuple[int, int]],
-    ) -> int:
-        penalty = 0
-        seen: set[str] = set()
+    ) -> float:
+        penalty = 0.0
         token_pattern = re.compile(r"\b[A-Za-z][A-Za-z0-9&+._-]{1,}\b")
+        grouped: dict[tuple[str, bool], tuple[str, list[tuple[int, int]]]] = {}
 
         for match in token_pattern.finditer(text):
             if _overlaps_any(match.start(), match.end(), term_spans):
                 continue
+            if _looks_like_url_or_email(text, match.start(), match.end()):
+                continue
 
             token = match.group(0)
-            lowered = token.lower()
-            if lowered in seen or _looks_like_url_or_email(
-                text, match.start(), match.end()
-            ):
-                continue
-            seen.add(lowered)
+            parenthetical = _inside_parentheses(text, match.start())
+            key = (token.casefold(), parenthetical)
+            if key not in grouped:
+                grouped[key] = (token, [])
+            grouped[key][1].append((match.start(), match.end()))
 
-            if _inside_parentheses(text, match.start()):
+        for (_key, parenthetical), (token, spans) in grouped.items():
+            first_start, first_end = spans[0]
+            count = len(spans)
+
+            if parenthetical:
                 issues.append(
                     Issue(
                         category=CATEGORY_HANGUL,
                         severity="참고",
-                        message=f"외국 글자 ‘{token}’가 괄호 안에 병기되어 있습니다.",
+                        message=(
+                            f"외국 글자 ‘{token}’가 괄호 안에 병기되어 있습니다."
+                            if count == 1
+                            else f"외국 글자 ‘{token}’가 괄호 안에 {count}회 병기되어 있습니다."
+                        ),
                         suggestion="뜻을 정확히 전달하는 데 필요한 병기인지 확인하세요.",
                         evidence="쉬운 공문서 쓰기: 필요한 경우에 한해 괄호 안에 외국 글자 병기",
                         source_type="RULE",
                         term=token,
-                        sentence=_sentence_around(text, match.start()),
-                        start=match.start(),
-                        end=match.end(),
+                        sentence=_sentence_around(text, first_start),
+                        start=first_start,
+                        end=first_end,
+                        occurrence_count=count,
+                        positions=list(spans),
                     )
                 )
                 continue
@@ -334,19 +390,59 @@ class PublicLanguageAnalyzer:
                 Issue(
                     category=CATEGORY_HANGUL,
                     severity="변경 권장",
-                    message=f"외국 글자 ‘{token}’가 본문에 직접 사용되었습니다.",
+                    message=(
+                        f"외국 글자 ‘{token}’가 본문에 직접 사용되었습니다."
+                        if count == 1
+                        else f"외국 글자 ‘{token}’가 본문에 {count}회 직접 사용되었습니다."
+                    ),
                     suggestion="가능하면 한글 또는 우리말 명칭을 먼저 쓰고, 원어가 필요하면 처음 한 번 괄호 안에 병기하세요.",
                     evidence="쉬운 공문서 쓰기: 공문서는 한글로 작성",
                     source_type="RULE",
                     term=token,
-                    sentence=_sentence_around(text, match.start()),
-                    start=match.start(),
-                    end=match.end(),
+                    sentence=_sentence_around(text, first_start),
+                    start=first_start,
+                    end=first_end,
+                    occurrence_count=count,
+                    positions=list(spans),
                 )
             )
-            penalty += 1
+            repeat_config = self.rules.get("repeat_scoring", {})
+            hangul_base = float(repeat_config.get("hangul_base", 1.0))
+            hangul_repeat = float(repeat_config.get("hangul_repeat", 0.15))
+            repeat_cap = int(repeat_config.get("repeat_cap", 5))
+            penalty += hangul_base + hangul_repeat * min(max(0, count - 1), repeat_cap)
 
-        return min(self.weights.get(CATEGORY_HANGUL, 10), penalty)
+        return min(float(self.weights.get(CATEGORY_HANGUL, 10)), penalty)
+
+
+def _term_penalty(
+    source_type: str,
+    severity: str,
+    occurrence_count: int,
+    config: dict,
+) -> float:
+    """동일 표현 반복은 완전 중복 감점하지 않고 완만하게만 가산한다."""
+    count = max(1, occurrence_count)
+    repeat_cap = int(config.get("repeat_cap", 5))
+    repeat_count = min(max(0, count - 1), repeat_cap)
+
+    if source_type == "OFFICIAL":
+        base = float(config.get("official_base", 0.6))
+        repeat_unit = float(config.get("official_repeat", 0.20))
+        return base + repeat_unit * repeat_count
+
+    base_by_severity = config.get(
+        "custom_base",
+        {
+            "change": 1.5,
+            "review": 0.8,
+            "reference": 0.2,
+        },
+    )
+    base = float(base_by_severity.get(severity, 0.8))
+    repeat_ratio = float(config.get("custom_repeat_ratio", 0.15))
+    return base + (base * repeat_ratio * repeat_count)
+
 
 def _valid_ascii_boundary(text: str, term: str, start: int, end: int) -> bool:
     if not term:
@@ -420,4 +516,9 @@ def _inside_parentheses(text: str, index: int) -> bool:
 
 def _looks_like_url_or_email(text: str, start: int, end: int) -> bool:
     window = text[max(0, start - 20): min(len(text), end + 30)]
-    return "http://" in window or "https://" in window or "@" in window or "www." in window
+    return (
+        "http://" in window
+        or "https://" in window
+        or "@" in window
+        or "www." in window
+    )

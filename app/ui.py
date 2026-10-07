@@ -131,7 +131,7 @@ class MainWindow(QMainWindow):
         self.batch_worker: BatchWorker | None = None
         self.batch_progress: QProgressDialog | None = None
 
-        self.setWindowTitle("공공언어 검사기 v2.5")
+        self.setWindowTitle("공공언어 검사기 v2.6")
         self.resize(1460, 900)
         self.setAcceptDrops(True)
 
@@ -172,9 +172,9 @@ class MainWindow(QMainWindow):
         self.summary_label = QLabel("검사 전")
         self.summary_label.setWordWrap(True)
 
-        self.table = QTableWidget(0, 6)
+        self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels(
-            ["등급", "영역", "문제", "개선안", "출처", "문맥"]
+            ["등급", "영역", "문제", "횟수", "개선안", "출처", "대표 문맥"]
         )
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setWordWrap(True)
@@ -197,7 +197,7 @@ class MainWindow(QMainWindow):
                 "문장 /35",
                 "어문 /20",
                 "한글 /10",
-                "개선 후보",
+                "개선 항목 / 발생",
                 "처리 시간",
             ]
         )
@@ -281,7 +281,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.detail_page, "문서 상세")
         self.tabs.addTab(self.batch_page, "파일 비교")
 
-        title = QLabel("공공언어 검사기 v2.5")
+        title = QLabel("공공언어 검사기 v2.6")
         title_font = title.font()
         title_font.setPointSize(19)
         title_font.setBold(True)
@@ -289,7 +289,7 @@ class MainWindow(QMainWindow):
 
         subtitle = QLabel(
             "‘쉬운 공문서 쓰기’ 작성 원칙과 쉬운 우리말 공식 사전 스냅샷을 바탕으로 "
-            "HWP·HWPX·DOCX·PDF·TXT를 로컬에서 분석합니다. HWP 5.x는 한/글 설치 없이 직접 읽으며 최대 20개 문서를 비교할 수 있습니다."
+            "HWP·HWPX·DOCX·PDF·TXT를 로컬에서 분석합니다. 같은 지적은 한 항목으로 묶어 사용 횟수와 함께 표시하고 최대 20개 문서를 비교할 수 있습니다."
         )
         subtitle.setWordWrap(True)
 
@@ -399,12 +399,13 @@ class MainWindow(QMainWindow):
             label.setText(f"{result.scores.get(category, 0)} / {maximums[category]}")
 
         self.summary_label.setText(
-            f"총 개선 후보 {result.stats.get('issues', 0)}건 · "
+            f"개선 항목 {result.stats.get('issues', 0)}개 · "
+            f"전체 발생 {result.stats.get('occurrences', 0)}회 · "
             f"공식 사전 {result.stats.get('official_unique', 0)}종/"
             f"{result.stats.get('official_hits', 0)}회 · "
-            f"변경 권장 {result.stats.get('change', 0)}건 · "
-            f"검토 권장 {result.stats.get('review', 0)}건 · "
-            f"참고 {result.stats.get('reference', 0)}건"
+            f"변경 권장 {result.stats.get('change', 0)}개 · "
+            f"검토 권장 {result.stats.get('review', 0)}개 · "
+            f"참고 {result.stats.get('reference', 0)}개"
         )
 
         self.table.setRowCount(len(result.issues))
@@ -413,6 +414,7 @@ class MainWindow(QMainWindow):
                 issue.severity,
                 issue.category,
                 issue.message,
+                f"{max(1, issue.occurrence_count)}회",
                 issue.suggestion,
                 issue.evidence,
                 issue.sentence,
@@ -533,11 +535,17 @@ class MainWindow(QMainWindow):
                 for item in successful
                 if item.result
             )
+            total_occurrences = sum(
+                item.result.stats.get("occurrences", 0)
+                for item in successful
+                if item.result
+            )
             total_chars = sum(item.text_chars for item in successful)
             self.batch_summary_label.setText(
                 f"분석 {len(successful)}개 · 오류 {len(failed)}개 · "
                 f"평균 {average:.1f}점 · 최고 {max(scores)}점 · 최저 {min(scores)}점 · "
-                f"총 개선 후보 {total_issues:,}건 · 추출 본문 {total_chars:,}자"
+                f"개선 항목 {total_issues:,}개 / 전체 발생 {total_occurrences:,}회 · "
+                f"추출 본문 {total_chars:,}자"
             )
         else:
             self.batch_summary_label.setText(
@@ -570,7 +578,7 @@ class MainWindow(QMainWindow):
                 f"{result.scores.get('알기 쉬운 문장', 0)} / 35",
                 f"{result.scores.get('어문규범', 0)} / 20",
                 f"{result.scores.get('한글 사용', 0)} / 10",
-                f"{result.stats.get('issues', 0):,}",
+                f"{result.stats.get('issues', 0):,}개 / {result.stats.get('occurrences', 0):,}회",
                 f"{item.elapsed_seconds:.2f}초",
             ]
             for col, value in enumerate(values, start=1):
