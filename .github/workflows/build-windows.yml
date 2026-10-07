@@ -40,9 +40,9 @@ jobs:
       - name: Smoke test packaged EXE
         shell: pwsh
         run: |
-          & ".\dist\PublicLanguageChecker.exe" --self-test
-          if ($LASTEXITCODE -ne 0) {
-            throw "Packaged EXE self-test failed with exit code $LASTEXITCODE"
+          $process = Start-Process -FilePath ".\dist\PublicLanguageChecker.exe" -ArgumentList "--self-test" -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            throw "Packaged EXE self-test failed with exit code $($process.ExitCode)"
           }
       - uses: actions/upload-artifact@v4
         with:
