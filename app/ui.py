@@ -34,7 +34,7 @@ class MainWindow(QMainWindow):
         self.current_path: Path | None = None
         self.current_issues: list[Issue] = []
 
-        self.setWindowTitle("공공언어 검사기 v2")
+        self.setWindowTitle("공공언어 검사기 v2.1")
         self.resize(1380, 860)
         self.setAcceptDrops(True)
 
@@ -131,7 +131,7 @@ class MainWindow(QMainWindow):
         splitter.addWidget(right)
         splitter.setSizes([660, 720])
 
-        title = QLabel("공공언어 검사기 v2")
+        title = QLabel("공공언어 검사기 v2.1")
         title_font = title.font()
         title_font.setPointSize(19)
         title_font.setBold(True)
