@@ -55,3 +55,24 @@ def test_analyze_multiple_text_files(tmp_path: Path):
     assert results[0].result.total_score == 100
     assert results[1].result.total_score < 100
     assert results[1].result.stats["official_unique"] == 1
+
+
+def test_batch_includes_table_readability_for_docx(tmp_path: Path):
+    from docx import Document
+
+    path = tmp_path / "table.docx"
+    doc = Document()
+    table = doc.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "항목"
+    table.cell(0, 1).text = "내용"
+    table.cell(1, 0).text = "대상"
+    table.cell(1, 1).text = "학생"
+    doc.save(path)
+
+    analyzer = PublicLanguageAnalyzer([], RULES)
+    results = analyze_files([path], analyzer, rules=RULES)
+
+    assert results[0].ok
+    assert results[0].table_result is not None
+    assert results[0].table_result.supported is True
+    assert results[0].table_result.table_count == 1
