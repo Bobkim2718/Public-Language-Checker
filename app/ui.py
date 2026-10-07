@@ -131,12 +131,13 @@ class MainWindow(QMainWindow):
         self.batch_worker: BatchWorker | None = None
         self.batch_progress: QProgressDialog | None = None
 
-        self.setWindowTitle("공공언어 검사기 v2.4")
+        self.setWindowTitle("공공언어 검사기 v2.4.1")
         self.resize(1460, 900)
         self.setAcceptDrops(True)
 
         self.editor = DocumentTextEdit()
-        self.editor.filesDropped.connect(self.handle_dropped_files)\n        self.editor.unsupportedFilesDropped.connect(self.handle_unsupported_files)
+        self.editor.filesDropped.connect(self.handle_dropped_files)
+        self.editor.unsupportedFilesDropped.connect(self.handle_unsupported_files)
         self.editor.setPlaceholderText(
             "문서를 끌어 놓거나 [문서 열기]를 누르세요.\n"
             "2개 이상 파일을 한 번에 놓으면 파일 비교 분석을 시작합니다.\n"
@@ -280,7 +281,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.detail_page, "문서 상세")
         self.tabs.addTab(self.batch_page, "파일 비교")
 
-        title = QLabel("공공언어 검사기 v2.4")
+        title = QLabel("공공언어 검사기 v2.4.1")
         title_font = title.font()
         title_font.setPointSize(19)
         title_font.setBold(True)

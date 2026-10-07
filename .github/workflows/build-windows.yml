@@ -18,6 +18,8 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
       - run: pip install -r requirements.txt
+      - name: Compile source
+        run: python -m compileall -q app run.py
       - name: Build single EXE
         shell: pwsh
         run: >
@@ -26,12 +28,22 @@ jobs:
           --clean
           --onefile
           --windowed
+          --collect-submodules app
+          --hidden-import app.ui
+          --hidden-import app.main
           --hidden-import win32com.client
           --hidden-import pythoncom
           --hidden-import pywintypes
           --name PublicLanguageChecker
           --add-data "data;data"
           run.py
+      - name: Smoke test packaged EXE
+        shell: pwsh
+        run: |
+          & ".\dist\PublicLanguageChecker.exe" --self-test
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged EXE self-test failed with exit code $LASTEXITCODE"
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: PublicLanguageChecker-Windows
