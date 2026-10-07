@@ -11,6 +11,8 @@ class Issue:
     message: str
     suggestion: str
     evidence: str
+    source_type: str = ""
+    term: str = ""
     sentence: str = ""
     start: int = -1
     end: int = -1
