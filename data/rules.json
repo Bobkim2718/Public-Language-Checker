@@ -1,5 +1,5 @@
 {
-  "version": "2026.10.07-v2.6",
+  "version": "2026.10.07-v2.7",
   "weights": {
     "알기 쉬운 용어": 35,
     "알기 쉬운 문장": 35,
@@ -13,7 +13,8 @@
   "metadata": {
     "basis": "쉬운 우리말을 쓰자 - 쉬운 공문서 쓰기 작성 원칙",
     "note": "이 점수는 공식 정부 평가 점수가 아니라 작성 원칙을 바탕으로 한 자체 분석 점수입니다.",
-    "repeat_policy": "같은 지적은 한 항목으로 묶고 최초 사용에 기본 감점, 반복 사용에는 최대 5회까지 완만한 추가 감점만 적용합니다."
+    "repeat_policy": "같은 지적은 한 항목으로 묶고 최초 사용에 기본 감점, 반복 사용에는 최대 5회까지 완만한 추가 감점만 적용합니다.",
+    "table_policy": "표 가독성은 공공언어 100점과 분리해 행·열 수, 병합, 빈 셀, 셀 글자 수, 중첩 표 등 구조 지표로 자체 진단합니다."
   },
   "repeat_scoring": {
     "repeat_cap": 5,
@@ -29,5 +30,16 @@
     "norm_repeat": 0.15,
     "hangul_base": 1,
     "hangul_repeat": 0.15
+  },
+  "table_readability": {
+    "wide_columns_review": 7,
+    "wide_columns_change": 9,
+    "long_cell_chars_review": 120,
+    "long_cell_chars_change": 220,
+    "cell_paragraphs_review": 5,
+    "empty_ratio_review": 0.35,
+    "merged_ratio_review": 0.3,
+    "dense_rows_review": 25,
+    "dense_cols_review": 5
   }
 }
