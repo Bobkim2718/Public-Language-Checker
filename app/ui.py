@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QTextCursor
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -12,8 +12,10 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
     QSplitter,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -22,16 +24,24 @@ from PySide6.QtWidgets import (
 )
 
 from .analyzer import PublicLanguageAnalyzer
+from .batch import (
+    MAX_BATCH_FILES,
+    BatchLimitError,
+    analyze_files,
+    format_bytes,
+    select_batch_files,
+    validate_source_sizes,
+)
 from .data_store import DataStore, DataStoreError
 from .document_loader import DocumentLoadError, SUPPORTED_EXTENSIONS, load_document
-from .models import Issue
-from .drop_utils import first_supported_file
+from .drop_utils import supported_files
+from .models import AnalysisResult, BatchDocumentResult, Issue
 
 
 class DocumentTextEdit(QTextEdit):
     """파일 드롭은 경로 문자열 삽입 대신 실제 문서 열기로 전달한다."""
 
-    fileDropped = Signal(str)
+    filesDropped = Signal(object)
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         if event.mimeData().hasUrls():
@@ -40,8 +50,8 @@ class DocumentTextEdit(QTextEdit):
                 for url in event.mimeData().urls()
                 if url.isLocalFile()
             ]
-            path = first_supported_file(local_paths, SUPPORTED_EXTENSIONS)
-            if path:
+            files = supported_files(local_paths, SUPPORTED_EXTENSIONS)
+            if files:
                 event.acceptProposedAction()
                 return
         super().dragEnterEvent(event)
@@ -53,12 +63,37 @@ class DocumentTextEdit(QTextEdit):
                 for url in event.mimeData().urls()
                 if url.isLocalFile()
             ]
-            path = first_supported_file(local_paths, SUPPORTED_EXTENSIONS)
-            if path:
-                self.fileDropped.emit(path)
+            files = supported_files(local_paths, SUPPORTED_EXTENSIONS)
+            if files:
+                self.filesDropped.emit(files)
                 event.acceptProposedAction()
                 return
         super().dropEvent(event)
+
+
+class BatchWorker(QObject):
+    progress = Signal(int, int, str)
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, paths: list[Path], terms: list[dict], rules: dict) -> None:
+        super().__init__()
+        self.paths = paths
+        self.terms = terms
+        self.rules = rules
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            analyzer = PublicLanguageAnalyzer(self.terms, self.rules)
+            results = analyze_files(
+                self.paths,
+                analyzer,
+                progress=lambda done, total, name: self.progress.emit(done, total, name),
+            )
+            self.finished.emit(results)
+        except Exception as exc:
+            self.failed.emit(str(exc))
 
 
 class MainWindow(QMainWindow):
@@ -67,14 +102,20 @@ class MainWindow(QMainWindow):
         self.store = DataStore()
         self.current_path: Path | None = None
         self.current_issues: list[Issue] = []
+        self.batch_results: list[BatchDocumentResult] = []
+        self.batch_thread: QThread | None = None
+        self.batch_worker: BatchWorker | None = None
+        self.batch_progress: QProgressDialog | None = None
 
-        self.setWindowTitle("공공언어 검사기 v2.2")
-        self.resize(1380, 860)
+        self.setWindowTitle("공공언어 검사기 v2.3")
+        self.resize(1460, 900)
         self.setAcceptDrops(True)
 
-        self.editor = DocumentTextEdit()\n        self.editor.fileDropped.connect(self._load_dropped_file)
+        self.editor = DocumentTextEdit()
+        self.editor.filesDropped.connect(self.handle_dropped_files)
         self.editor.setPlaceholderText(
             "문서를 끌어 놓거나 [문서 열기]를 누르세요.\n"
+            "2개 이상 파일을 한 번에 놓으면 파일 비교 분석을 시작합니다.\n"
             "텍스트를 직접 붙여 넣고 검사할 수도 있습니다."
         )
 
@@ -115,8 +156,36 @@ class MainWindow(QMainWindow):
         self.table.setAlternatingRowColors(True)
         self.table.cellClicked.connect(self.jump_to_issue)
 
+        self.batch_summary_label = QLabel(
+            f"한 번에 최대 {MAX_BATCH_FILES}개 문서를 비교할 수 있습니다."
+        )
+        self.batch_summary_label.setWordWrap(True)
+
+        self.batch_table = QTableWidget(0, 10)
+        self.batch_table.setHorizontalHeaderLabels(
+            [
+                "파일명",
+                "파일 크기",
+                "본문 글자",
+                "총점",
+                "용어 /35",
+                "문장 /35",
+                "어문 /20",
+                "한글 /10",
+                "개선 후보",
+                "처리 시간",
+            ]
+        )
+        self.batch_table.horizontalHeader().setStretchLastSection(True)
+        self.batch_table.setAlternatingRowColors(True)
+        self.batch_table.setWordWrap(False)
+        self.batch_table.cellDoubleClicked.connect(self.show_batch_detail)
+
         open_button = QPushButton("문서 열기")
         open_button.clicked.connect(self.open_document)
+
+        batch_button = QPushButton("여러 문서 비교")
+        batch_button.clicked.connect(self.open_documents_for_compare)
 
         analyze_button = QPushButton("검사하기")
         analyze_button.clicked.connect(self.analyze)
@@ -133,9 +202,13 @@ class MainWindow(QMainWindow):
         api_button = QPushButton("공식 API 상세 조회")
         api_button.clicked.connect(self.lookup_api)
 
+        detail_button = QPushButton("선택 문서 상세 보기")
+        detail_button.clicked.connect(self.show_selected_batch_detail)
+
         top_buttons = QHBoxLayout()
         for button in (
             open_button,
+            batch_button,
             analyze_button,
             update_button,
             online_update_button,
@@ -163,9 +236,27 @@ class MainWindow(QMainWindow):
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(left)
         splitter.addWidget(right)
-        splitter.setSizes([660, 720])
+        splitter.setSizes([680, 760])
 
-        title = QLabel("공공언어 검사기 v2.2")
+        self.detail_page = QWidget()
+        detail_layout = QVBoxLayout(self.detail_page)
+        detail_layout.setContentsMargins(0, 0, 0, 0)
+        detail_layout.addWidget(splitter)
+
+        self.batch_page = QWidget()
+        batch_layout = QVBoxLayout(self.batch_page)
+        batch_layout.addWidget(self.batch_summary_label)
+        batch_layout.addWidget(self.batch_table, 1)
+        batch_footer = QHBoxLayout()
+        batch_footer.addWidget(detail_button)
+        batch_footer.addStretch(1)
+        batch_layout.addLayout(batch_footer)
+
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self.detail_page, "문서 상세")
+        self.tabs.addTab(self.batch_page, "파일 비교")
+
+        title = QLabel("공공언어 검사기 v2.3")
         title_font = title.font()
         title_font.setPointSize(19)
         title_font.setBold(True)
@@ -173,7 +264,7 @@ class MainWindow(QMainWindow):
 
         subtitle = QLabel(
             "‘쉬운 공문서 쓰기’ 작성 원칙과 쉬운 우리말 공식 사전 스냅샷을 바탕으로 "
-            "문서를 로컬에서 분석합니다. 점수는 정부기관의 공식 평가 점수가 아닌 자체 분석 점수입니다."
+            "문서를 로컬에서 분석합니다. 최대 20개 문서의 결과를 한 화면에서 비교할 수 있습니다."
         )
         subtitle.setWordWrap(True)
 
@@ -188,7 +279,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(title)
         layout.addWidget(subtitle)
         layout.addLayout(top_buttons)
-        layout.addWidget(splitter, 1)
+        layout.addWidget(self.tabs, 1)
         layout.addWidget(privacy)
         self.setCentralWidget(root)
 
@@ -208,8 +299,25 @@ class MainWindow(QMainWindow):
         if path:
             self._load_path(Path(path))
 
-    def _load_dropped_file(self, path: str) -> None:
-        self._load_path(Path(path))
+    def open_documents_for_compare(self) -> None:
+        paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            f"비교할 문서 선택 - 최대 {MAX_BATCH_FILES}개",
+            "",
+            "지원 문서 (*.hwpx *.docx *.pdf *.txt);;모든 파일 (*.*)",
+        )
+        if paths:
+            self.start_batch_analysis(paths)
+
+    @Slot(object)
+    def handle_dropped_files(self, files: object) -> None:
+        paths = [str(x) for x in (files or [])]
+        if not paths:
+            return
+        if len(paths) == 1:
+            self._load_path(Path(paths[0]))
+        else:
+            self.start_batch_analysis(paths)
 
     def _load_path(self, path: Path) -> None:
         try:
@@ -221,12 +329,15 @@ class MainWindow(QMainWindow):
         self.current_path = path
         self.editor.setPlainText(text)
         self.statusBar().showMessage(f"불러옴: {path.name}")
+        self.tabs.setCurrentWidget(self.detail_page)
         self.analyze()
 
     def analyze(self) -> None:
         text = self.editor.toPlainText()
         if not text.strip():
-            QMessageBox.information(self, "검사할 내용 없음", "문서를 열거나 텍스트를 입력해 주세요.")
+            QMessageBox.information(
+                self, "검사할 내용 없음", "문서를 열거나 텍스트를 입력해 주세요."
+            )
             return
 
         try:
@@ -235,6 +346,9 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "데이터 오류", str(exc))
             return
 
+        self._render_result(result)
+
+    def _render_result(self, result: AnalysisResult) -> None:
         self.current_issues = result.issues
         self.score_label.setText(str(result.total_score))
 
@@ -271,6 +385,194 @@ class MainWindow(QMainWindow):
                 item.setToolTip(value or issue.sentence)
                 self.table.setItem(row, col, item)
         self.table.resizeRowsToContents()
+
+    def start_batch_analysis(self, raw_paths: list[str]) -> None:
+        paths = select_batch_files(raw_paths)
+
+        if not paths:
+            QMessageBox.information(
+                self, "분석할 파일 없음", "지원되는 문서를 찾지 못했습니다."
+            )
+            return
+
+        if len(raw_paths) > MAX_BATCH_FILES:
+            QMessageBox.information(
+                self,
+                "파일 수 제한",
+                f"한 번에 최대 {MAX_BATCH_FILES}개까지 분석합니다. "
+                f"앞의 {MAX_BATCH_FILES}개 파일만 선택했습니다.",
+            )
+
+        if len(paths) == 1:
+            self._load_path(paths[0])
+            return
+
+        try:
+            validate_source_sizes(paths)
+            terms = self.store.load_terms()
+            rules = self.store.load_rules()
+        except (BatchLimitError, DataStoreError, OSError) as exc:
+            QMessageBox.critical(self, "배치 분석 불가", str(exc))
+            return
+
+        if self.batch_thread is not None and self.batch_thread.isRunning():
+            QMessageBox.information(
+                self, "분석 중", "현재 진행 중인 파일 비교 분석이 끝난 뒤 다시 시도해 주세요."
+            )
+            return
+
+        self.batch_progress = QProgressDialog(
+            "문서를 분석하고 있습니다.",
+            "",
+            0,
+            len(paths),
+            self,
+        )
+        self.batch_progress.setWindowTitle("파일 비교 분석")
+        self.batch_progress.setCancelButton(None)
+        self.batch_progress.setWindowModality(Qt.WindowModal)
+        self.batch_progress.setMinimumDuration(0)
+        self.batch_progress.setValue(0)
+
+        self.batch_thread = QThread(self)
+        self.batch_worker = BatchWorker(paths, terms, rules)
+        self.batch_worker.moveToThread(self.batch_thread)
+
+        self.batch_thread.started.connect(self.batch_worker.run)
+        self.batch_worker.progress.connect(self._update_batch_progress)
+        self.batch_worker.finished.connect(self._batch_finished)
+        self.batch_worker.failed.connect(self._batch_failed)
+        self.batch_worker.finished.connect(self.batch_thread.quit)
+        self.batch_worker.failed.connect(self.batch_thread.quit)
+        self.batch_thread.finished.connect(self._cleanup_batch_thread)
+
+        self.batch_thread.start()
+
+    @Slot(int, int, str)
+    def _update_batch_progress(self, done: int, total: int, name: str) -> None:
+        if self.batch_progress is None:
+            return
+        self.batch_progress.setMaximum(total)
+        self.batch_progress.setValue(done)
+        self.batch_progress.setLabelText(
+            f"{done}/{total} · {name}" if name else f"{done}/{total}"
+        )
+
+    @Slot(object)
+    def _batch_finished(self, results: object) -> None:
+        self.batch_results = list(results or [])
+        if self.batch_progress is not None:
+            self.batch_progress.setValue(self.batch_progress.maximum())
+            self.batch_progress.close()
+
+        self._render_batch_table()
+        self.tabs.setCurrentWidget(self.batch_page)
+
+    @Slot(str)
+    def _batch_failed(self, message: str) -> None:
+        if self.batch_progress is not None:
+            self.batch_progress.close()
+        QMessageBox.critical(self, "파일 비교 분석 실패", message)
+
+    @Slot()
+    def _cleanup_batch_thread(self) -> None:
+        if self.batch_worker is not None:
+            self.batch_worker.deleteLater()
+        if self.batch_thread is not None:
+            self.batch_thread.deleteLater()
+        self.batch_worker = None
+        self.batch_thread = None
+        self.batch_progress = None
+
+    def _render_batch_table(self) -> None:
+        successful = [item for item in self.batch_results if item.ok]
+        failed = [item for item in self.batch_results if not item.ok]
+
+        if successful:
+            scores = [item.result.total_score for item in successful if item.result]
+            average = sum(scores) / len(scores)
+            total_issues = sum(
+                item.result.stats.get("issues", 0)
+                for item in successful
+                if item.result
+            )
+            total_chars = sum(item.text_chars for item in successful)
+            self.batch_summary_label.setText(
+                f"분석 {len(successful)}개 · 오류 {len(failed)}개 · "
+                f"평균 {average:.1f}점 · 최고 {max(scores)}점 · 최저 {min(scores)}점 · "
+                f"총 개선 후보 {total_issues:,}건 · 추출 본문 {total_chars:,}자"
+            )
+        else:
+            self.batch_summary_label.setText(
+                f"성공한 문서가 없습니다. 오류 {len(failed)}개"
+            )
+
+        self.batch_table.setRowCount(len(self.batch_results))
+
+        for row, item in enumerate(self.batch_results):
+            first = QTableWidgetItem(item.name)
+            first.setData(Qt.UserRole, row)
+            first.setToolTip(item.error or item.path)
+            self.batch_table.setItem(row, 0, first)
+
+            if not item.ok or item.result is None:
+                self.batch_table.setItem(row, 1, QTableWidgetItem(format_bytes(item.size_bytes)))
+                for col in range(2, 10):
+                    value = "오류" if col == 3 else ""
+                    cell = QTableWidgetItem(value)
+                    cell.setToolTip(item.error)
+                    self.batch_table.setItem(row, col, cell)
+                continue
+
+            result = item.result
+            values = [
+                format_bytes(item.size_bytes),
+                f"{item.text_chars:,}",
+                str(result.total_score),
+                f"{result.scores.get('알기 쉬운 용어', 0)} / 35",
+                f"{result.scores.get('알기 쉬운 문장', 0)} / 35",
+                f"{result.scores.get('어문규범', 0)} / 20",
+                f"{result.scores.get('한글 사용', 0)} / 10",
+                f"{result.stats.get('issues', 0):,}",
+                f"{item.elapsed_seconds:.2f}초",
+            ]
+            for col, value in enumerate(values, start=1):
+                self.batch_table.setItem(row, col, QTableWidgetItem(value))
+
+        self.batch_table.resizeColumnsToContents()
+
+    def show_selected_batch_detail(self) -> None:
+        row = self.batch_table.currentRow()
+        if row < 0:
+            QMessageBox.information(
+                self, "문서 선택", "상세히 볼 문서를 먼저 선택해 주세요."
+            )
+            return
+        self.show_batch_detail(row, 0)
+
+    def show_batch_detail(self, row: int, _column: int) -> None:
+        first = self.batch_table.item(row, 0)
+        if first is None:
+            return
+
+        index = first.data(Qt.UserRole)
+        if not isinstance(index, int) or index < 0 or index >= len(self.batch_results):
+            return
+
+        item = self.batch_results[index]
+        if not item.ok or item.result is None:
+            QMessageBox.warning(
+                self, "분석 오류", item.error or "이 문서는 분석하지 못했습니다."
+            )
+            return
+
+        self.current_path = Path(item.path)
+        self.editor.setPlainText(item.text)
+        self._render_result(item.result)
+        self.statusBar().showMessage(
+            f"배치 결과 상세: {item.name} · {item.result.total_score}점"
+        )
+        self.tabs.setCurrentWidget(self.detail_page)
 
     def jump_to_issue(self, row: int, _column: int) -> None:
         if row < 0 or row >= len(self.current_issues):
@@ -401,8 +703,8 @@ class MainWindow(QMainWindow):
                 for url in event.mimeData().urls()
                 if url.isLocalFile()
             ]
-            path = first_supported_file(local_paths, SUPPORTED_EXTENSIONS)
-            if path:
+            files = supported_files(local_paths, SUPPORTED_EXTENSIONS)
+            if files:
                 event.acceptProposedAction()
                 return
         super().dragEnterEvent(event)
@@ -414,9 +716,9 @@ class MainWindow(QMainWindow):
                 for url in event.mimeData().urls()
                 if url.isLocalFile()
             ]
-            path = first_supported_file(local_paths, SUPPORTED_EXTENSIONS)
-            if path:
-                self._load_path(Path(path))
+            files = supported_files(local_paths, SUPPORTED_EXTENSIONS)
+            if files:
+                self.handle_dropped_files(files)
                 event.acceptProposedAction()
                 return
         super().dropEvent(event)
