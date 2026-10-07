@@ -33,9 +33,10 @@ from .batch import (
     validate_source_sizes,
 )
 from .data_store import DataStore, DataStoreError
-from .document_loader import DocumentLoadError, SUPPORTED_EXTENSIONS, load_document
+from .document_loader import DocumentLoadError, SUPPORTED_EXTENSIONS, load_document_content
 from .drop_utils import supported_files
-from .models import AnalysisResult, BatchDocumentResult, Issue
+from .models import AnalysisResult, BatchDocumentResult, DocumentContent, Issue, TableReadabilityResult
+from .table_readability import TableReadabilityAnalyzer
 
 
 class DocumentTextEdit(QTextEdit):
@@ -113,6 +114,7 @@ class BatchWorker(QObject):
             results = analyze_files(
                 self.paths,
                 analyzer,
+                rules=self.rules,
                 progress=lambda done, total, name: self.progress.emit(done, total, name),
             )
             self.finished.emit(results)
@@ -125,13 +127,15 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.store = DataStore()
         self.current_path: Path | None = None
+        self.current_content: DocumentContent | None = None
         self.current_issues: list[Issue] = []
+        self.current_table_result: TableReadabilityResult | None = None
         self.batch_results: list[BatchDocumentResult] = []
         self.batch_thread: QThread | None = None
         self.batch_worker: BatchWorker | None = None
         self.batch_progress: QProgressDialog | None = None
 
-        self.setWindowTitle("공공언어 검사기 v2.6")
+        self.setWindowTitle("공공언어 검사기 v2.7")
         self.resize(1460, 900)
         self.setAcceptDrops(True)
 
@@ -186,7 +190,7 @@ class MainWindow(QMainWindow):
         )
         self.batch_summary_label.setWordWrap(True)
 
-        self.batch_table = QTableWidget(0, 10)
+        self.batch_table = QTableWidget(0, 11)
         self.batch_table.setHorizontalHeaderLabels(
             [
                 "파일명",
@@ -198,6 +202,7 @@ class MainWindow(QMainWindow):
                 "어문 /20",
                 "한글 /10",
                 "개선 항목 / 발생",
+                "표 가독성",
                 "처리 시간",
             ]
         )
@@ -205,6 +210,26 @@ class MainWindow(QMainWindow):
         self.batch_table.setAlternatingRowColors(True)
         self.batch_table.setWordWrap(False)
         self.batch_table.cellDoubleClicked.connect(self.show_batch_detail)
+
+        self.table_structure_summary_label = QLabel(
+            "문서를 열면 HWPX·DOCX 표의 구조 가독성을 별도로 진단합니다."
+        )
+        self.table_structure_summary_label.setWordWrap(True)
+
+        self.table_overview = QTableWidget(0, 7)
+        self.table_overview.setHorizontalHeaderLabels(
+            ["표", "판정", "크기", "총 문자", "최장 셀", "빈 셀", "병합 / 중첩"]
+        )
+        self.table_overview.horizontalHeader().setStretchLastSection(True)
+        self.table_overview.setAlternatingRowColors(True)
+
+        self.table_issue_table = QTableWidget(0, 6)
+        self.table_issue_table.setHorizontalHeaderLabels(
+            ["등급", "표", "위치", "문제", "개선안", "진단 기준"]
+        )
+        self.table_issue_table.horizontalHeader().setStretchLastSection(True)
+        self.table_issue_table.setWordWrap(True)
+        self.table_issue_table.setAlternatingRowColors(True)
 
         open_button = QPushButton("문서 열기")
         open_button.clicked.connect(self.open_document)
@@ -277,11 +302,20 @@ class MainWindow(QMainWindow):
         batch_footer.addStretch(1)
         batch_layout.addLayout(batch_footer)
 
+        self.table_page = QWidget()
+        table_layout = QVBoxLayout(self.table_page)
+        table_layout.addWidget(self.table_structure_summary_label)
+        table_layout.addWidget(QLabel("표 구조"))
+        table_layout.addWidget(self.table_overview, 1)
+        table_layout.addWidget(QLabel("가독성 개선 후보"))
+        table_layout.addWidget(self.table_issue_table, 2)
+
         self.tabs = QTabWidget()
         self.tabs.addTab(self.detail_page, "문서 상세")
+        self.tabs.addTab(self.table_page, "표·구조 가독성")
         self.tabs.addTab(self.batch_page, "파일 비교")
 
-        title = QLabel("공공언어 검사기 v2.6")
+        title = QLabel("공공언어 검사기 v2.7")
         title_font = title.font()
         title_font.setPointSize(19)
         title_font.setBold(True)
@@ -289,7 +323,7 @@ class MainWindow(QMainWindow):
 
         subtitle = QLabel(
             "‘쉬운 공문서 쓰기’ 작성 원칙과 쉬운 우리말 공식 사전 스냅샷을 바탕으로 "
-            "HWP·HWPX·DOCX·PDF·TXT를 로컬에서 분석합니다. 같은 지적은 한 항목으로 묶어 사용 횟수와 함께 표시하고 최대 20개 문서를 비교할 수 있습니다."
+            "HWP·HWPX·DOCX·PDF·TXT를 로컬에서 분석합니다. HWPX·DOCX는 표의 행·열·병합 구조를 별도로 분석해 가독성 개선 후보도 제시합니다."
         )
         subtitle.setWordWrap(True)
 
@@ -358,16 +392,20 @@ class MainWindow(QMainWindow):
 
     def _load_path(self, path: Path) -> None:
         try:
-            text = load_document(path)
+            content = load_document_content(path)
         except DocumentLoadError as exc:
             QMessageBox.critical(self, "문서 열기 실패", str(exc))
             return
 
         self.current_path = path
-        self.editor.setPlainText(text)
+        self.current_content = content
+        self.editor.setPlainText(content.text)
         self.statusBar().showMessage(f"불러옴: {path.name}")
         self.tabs.setCurrentWidget(self.detail_page)
         self.analyze()
+
+        table_result = TableReadabilityAnalyzer(self.store.load_rules()).analyze(content)
+        self._render_table_result(table_result)
 
     def analyze(self) -> None:
         text = self.editor.toPlainText()
@@ -424,6 +462,59 @@ class MainWindow(QMainWindow):
                 item.setToolTip(value or issue.sentence)
                 self.table.setItem(row, col, item)
         self.table.resizeRowsToContents()
+
+    def _render_table_result(self, result: TableReadabilityResult | None) -> None:
+        self.current_table_result = result
+
+        if result is None:
+            self.table_structure_summary_label.setText("표 구조 진단 결과가 없습니다.")
+            self.table_overview.setRowCount(0)
+            self.table_issue_table.setRowCount(0)
+            return
+
+        self.table_structure_summary_label.setText(
+            f"표 구조 진단: {result.status} · 감지된 표 {result.table_count}개 · "
+            + (result.note or "")
+        )
+
+        self.table_overview.setRowCount(len(result.assessments))
+        for row, item in enumerate(result.assessments):
+            values = [
+                f"표 {item.table_index}",
+                item.status,
+                f"{item.rows}행 × {item.cols}열",
+                f"{item.total_chars:,}자",
+                f"{item.max_cell_chars:,}자",
+                f"{item.empty_cells}개",
+                f"병합 {item.merged_cells} / 중첩 {item.nested_tables}",
+            ]
+            for col, value in enumerate(values):
+                cell = QTableWidgetItem(value)
+                self.table_overview.setItem(row, col, cell)
+        self.table_overview.resizeColumnsToContents()
+
+        self.table_issue_table.setRowCount(len(result.issues))
+        for row, issue in enumerate(result.issues):
+            if issue.row is not None and issue.col is not None:
+                location = f"{issue.row}행 {issue.col}열"
+            elif issue.row is not None:
+                location = f"{issue.row}행"
+            else:
+                location = "표 전체"
+
+            values = [
+                issue.severity,
+                f"표 {issue.table_index}",
+                location,
+                issue.message,
+                issue.suggestion,
+                "구조 기반 자체 진단",
+            ]
+            for col, value in enumerate(values):
+                cell = QTableWidgetItem(value)
+                cell.setToolTip(value)
+                self.table_issue_table.setItem(row, col, cell)
+        self.table_issue_table.resizeRowsToContents()
 
     def start_batch_analysis(self, raw_paths: list[str]) -> None:
         paths = select_batch_files(raw_paths)
@@ -562,7 +653,7 @@ class MainWindow(QMainWindow):
 
             if not item.ok or item.result is None:
                 self.batch_table.setItem(row, 1, QTableWidgetItem(format_bytes(item.size_bytes)))
-                for col in range(2, 10):
+                for col in range(2, 11):
                     value = "오류" if col == 3 else ""
                     cell = QTableWidgetItem(value)
                     cell.setToolTip(item.error)
@@ -579,6 +670,11 @@ class MainWindow(QMainWindow):
                 f"{result.scores.get('어문규범', 0)} / 20",
                 f"{result.scores.get('한글 사용', 0)} / 10",
                 f"{result.stats.get('issues', 0):,}개 / {result.stats.get('occurrences', 0):,}회",
+                (
+                    f"{item.table_result.status} ({item.table_result.table_count}개)"
+                    if item.table_result is not None
+                    else "—"
+                ),
                 f"{item.elapsed_seconds:.2f}초",
             ]
             for col, value in enumerate(values, start=1):
@@ -614,6 +710,7 @@ class MainWindow(QMainWindow):
         self.current_path = Path(item.path)
         self.editor.setPlainText(item.text)
         self._render_result(item.result)
+        self._render_table_result(item.table_result)
         self.statusBar().showMessage(
             f"배치 결과 상세: {item.name} · {item.result.total_score}점"
         )
