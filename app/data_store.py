@@ -38,22 +38,87 @@ class DataStore:
 
     def load_terms(self) -> list[dict]:
         terms: list[dict] = []
-        terms.extend(self._read_json(PACKAGE_DATA_DIR / "default_terms.json", []))
 
+        # 1) OFFICIAL: 사용자가 공개 API로 사전에 확보해 둔 쉬운 우리말 사전 스냅샷
+        terms.extend(self._load_official_snapshot())
+
+        # 2) CUSTOM: 앱 자체 검사어. 공식 스냅샷과 겹치는 항목은 두지 않는다.
+        for item in self._read_json(PACKAGE_DATA_DIR / "default_terms.json", []):
+            normalized = _normalize_generic_term(item, default_source_type="CUSTOM")
+            if normalized:
+                terms.append(normalized)
+
+        # 3) MANAGED/OFFICIAL DELTA: 온라인·오프라인 업데이트로 추가/수정된 데이터
         synced = self._read_json(self.synced_bundle_path, {})
         if isinstance(synced, dict):
-            terms.extend(synced.get("terms", []) or [])
+            for item in synced.get("official_terms", []) or []:
+                normalized = _normalize_official_term(
+                    item,
+                    source="쉬운 우리말 공식 사전 업데이트",
+                )
+                if normalized:
+                    terms.append(normalized)
+            for item in synced.get("terms", []) or []:
+                normalized = _normalize_generic_term(item, default_source_type="MANAGED")
+                if normalized:
+                    terms.append(normalized)
 
-        terms.extend(self._read_json(self.user_terms_path, []))
+        # 4) USER: 기관/사용자 사전. 같은 표제어가 있으면 가장 높은 우선순위로 덮어쓴다.
+        for item in self._read_json(self.user_terms_path, []):
+            normalized = _normalize_generic_term(item, default_source_type="USER")
+            if normalized:
+                terms.append(normalized)
 
         merged: dict[str, dict] = {}
         for item in terms:
-            if not isinstance(item, dict):
-                continue
             term = str(item.get("term", "")).strip()
             if term:
-                merged[term] = item
+                merged[term.casefold()] = item
         return list(merged.values())
+
+    def _load_official_snapshot(self) -> list[dict]:
+        directory = PACKAGE_DATA_DIR / "official_terms"
+        if not directory.exists():
+            return []
+
+        items: list[dict] = []
+        for path in sorted(directory.glob("official_terms_*.json")):
+            raw_items = self._read_json(path, [])
+            if not isinstance(raw_items, list):
+                raise DataStoreError(f"공식 사전 파일 형식이 올바르지 않습니다: {path.name}")
+            for raw in raw_items:
+                normalized = _normalize_official_term(
+                    raw,
+                    source="쉬운 우리말 공식 사전 스냅샷",
+                )
+                if normalized:
+                    items.append(normalized)
+        return items
+
+    def dictionary_info(self) -> dict:
+        metadata = self._read_json(PACKAGE_DATA_DIR / "official_terms" / "metadata.json", {})
+        custom = self._read_json(PACKAGE_DATA_DIR / "default_terms.json", [])
+        user = self._read_json(self.user_terms_path, [])
+        synced = self._read_json(self.synced_bundle_path, {})
+        official_delta = synced.get("official_terms", []) if isinstance(synced, dict) else []
+
+        return {
+            "official_count": int(metadata.get("record_count", 0) or 0),
+            "official_version": str(metadata.get("version", "알 수 없음")),
+            "official_delta_count": len(official_delta or []),
+            "custom_count": len(custom or []),
+            "user_count": len(user or []),
+        }
+
+    def dictionary_summary(self) -> str:
+        info = self.dictionary_info()
+        official = info["official_count"]
+        delta = info["official_delta_count"]
+        extra = f" + 업데이트 {delta}" if delta else ""
+        return (
+            f"공식 사전 스냅샷 {official:,}개{extra} · "
+            f"자체 검사어 {info['custom_count']}개 · 사용자 사전 {info['user_count']}개"
+        )
 
     def add_user_term(
         self,
@@ -63,13 +128,14 @@ class DataStore:
         note: str = "",
     ) -> None:
         items = self._read_json(self.user_terms_path, [])
-        items = [x for x in items if x.get("term") != term]
+        items = [x for x in items if str(x.get("term", "")).casefold() != term.casefold()]
         items.append(
             {
                 "term": term,
                 "alternatives": alternatives,
                 "severity": severity,
                 "source": "사용자 사전",
+                "source_type": "USER",
                 "note": note,
             }
         )
@@ -109,7 +175,7 @@ class DataStore:
         response = requests.get(
             manifest_url,
             timeout=timeout,
-            headers={"User-Agent": "PublicLanguageChecker/0.1"},
+            headers={"User-Agent": "PublicLanguageChecker/0.2"},
         )
         response.raise_for_status()
 
@@ -135,7 +201,7 @@ class DataStore:
         bundle_response = requests.get(
             bundle_url,
             timeout=timeout,
-            headers={"User-Agent": "PublicLanguageChecker/0.1"},
+            headers={"User-Agent": "PublicLanguageChecker/0.2"},
         )
         bundle_response.raise_for_status()
         raw = bundle_response.content
@@ -167,7 +233,7 @@ class DataStore:
             endpoint,
             params={"keyword": keyword},
             timeout=timeout,
-            headers={"User-Agent": "PublicLanguageChecker/0.1"},
+            headers={"User-Agent": "PublicLanguageChecker/0.2"},
         )
         response.raise_for_status()
 
@@ -187,6 +253,60 @@ class DataStore:
         return []
 
 
+def _normalize_official_term(item: Any, source: str) -> dict | None:
+    if not isinstance(item, dict):
+        return None
+    keyword = str(item.get("keyword") or item.get("term") or "").strip()
+    alt_text = str(item.get("alt") or "").strip()
+    if not keyword:
+        return None
+
+    alternatives = item.get("alternatives")
+    if isinstance(alternatives, list):
+        values = [str(x).strip() for x in alternatives if str(x).strip()]
+    else:
+        values = [x.strip() for x in alt_text.split(",") if x.strip()]
+
+    return {
+        "term": keyword,
+        "alternatives": values,
+        "alt_text": alt_text or ", ".join(values),
+        "severity": "review",
+        "source": source,
+        "source_type": "OFFICIAL",
+    }
+
+
+def _normalize_generic_term(item: Any, default_source_type: str) -> dict | None:
+    if not isinstance(item, dict):
+        return None
+    term = str(item.get("term", "")).strip()
+    if not term:
+        return None
+
+    alternatives = item.get("alternatives", [])
+    if not isinstance(alternatives, list):
+        alternatives = [str(alternatives)]
+    alternatives = [str(x).strip() for x in alternatives if str(x).strip()]
+
+    normalized = dict(item)
+    normalized["term"] = term
+    normalized["alternatives"] = alternatives
+    normalized["alt_text"] = str(item.get("alt_text") or ", ".join(alternatives))
+    normalized["source_type"] = str(item.get("source_type") or default_source_type)
+    normalized["source"] = str(item.get("source") or _default_source_label(normalized["source_type"]))
+    normalized["severity"] = str(item.get("severity") or "review")
+    return normalized
+
+
+def _default_source_label(source_type: str) -> str:
+    return {
+        "CUSTOM": "자체 검사 사전",
+        "USER": "사용자 사전",
+        "MANAGED": "관리형 업데이트 사전",
+    }.get(source_type, "사전 데이터")
+
+
 def _validate_bundle(bundle: Any) -> None:
     if not isinstance(bundle, dict):
         raise DataStoreError("업데이트 파일은 JSON 객체여야 합니다.")
@@ -194,6 +314,8 @@ def _validate_bundle(bundle: Any) -> None:
         raise DataStoreError("업데이트 파일에 version 항목이 없습니다.")
     if "terms" in bundle and not isinstance(bundle["terms"], list):
         raise DataStoreError("terms 항목은 목록이어야 합니다.")
+    if "official_terms" in bundle and not isinstance(bundle["official_terms"], list):
+        raise DataStoreError("official_terms 항목은 목록이어야 합니다.")
     if "rules" in bundle and not isinstance(bundle["rules"], dict):
         raise DataStoreError("rules 항목은 객체여야 합니다.")
 
