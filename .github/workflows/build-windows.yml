@@ -26,6 +26,9 @@ jobs:
           --clean
           --onefile
           --windowed
+          --hidden-import win32com.client
+          --hidden-import pythoncom
+          --hidden-import pywintypes
           --name PublicLanguageChecker
           --add-data "data;data"
           run.py
