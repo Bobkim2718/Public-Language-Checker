@@ -111,6 +111,7 @@ def test_hwpx_reconstructs_merged_cell_columns(tmp_path: Path):
 
     assert "구분 | 운영 내용" in text
     assert "1 | 피드백 | 모니터링" in text
+    assert text.count("1 | 피드백 | 모니터링") == 1
 
 
 def test_hwp_uses_local_hancom_conversion(tmp_path: Path, monkeypatch):
