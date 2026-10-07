@@ -16,4 +16,4 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
       - run: pip install requests python-docx pypdf
-      - run: python scripts/benchmark_capacity.py
+      - run: python -m scripts.benchmark_capacity
